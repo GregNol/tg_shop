@@ -1,5 +1,5 @@
 from aiogram import F, Router, Bot, types
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandStart
 from aiogram.enums import ChatMemberStatus
 
 from config import Config
@@ -28,9 +28,29 @@ async def show_main_menu(message: types.Message, repo: Repository, config: Confi
         reply_markup=get_main_menu_kb(config, user.id, support_contact, news_channel_link)
     )
 
-@router.message(Command("start"))
+@router.message(CommandStart())
 async def cmd_start(message: types.Message, repo: Repository, config: Config):
-    await repo.get_or_create_user(message.from_user.id, message.from_user.username, message.from_user.first_name, message.from_user.last_name)
+    referrer_id = None
+    args = message.text.split()
+    if len(args) > 1 and args[1].startswith('ref_'):
+        try:
+            ref_id_candidate = int(args[1].split('_')[1])
+            # Проверяем, чтобы пользователь не пригласил сам себя
+            if ref_id_candidate != message.from_user.id:
+                # Убеждаемся, что такой рефовод существует
+                referrer_user = await repo.get_user(ref_id_candidate)
+                if referrer_user:
+                    referrer_id = ref_id_candidate
+        except (ValueError, IndexError):
+            pass
+
+    await repo.get_or_create_user(
+        telegram_id=message.from_user.id,
+        username=message.from_user.username,
+        first_name=message.from_user.first_name,
+        last_name=message.from_user.last_name,
+        referrer_id=referrer_id
+    )
     await show_main_menu(message, repo, config, message.from_user)
 
 @router.callback_query(F.data == "main_menu")

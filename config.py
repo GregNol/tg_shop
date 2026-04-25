@@ -44,6 +44,11 @@ class CrystalPayConfig:
     secret: str
 
 @dataclass
+class YookassaConfig:
+    shop_id: str
+    secret_key: str
+
+@dataclass
 class TonConfig:
     api_ton: str
     wallet_seed: str
@@ -66,6 +71,7 @@ class Config:
     cryptobot: CryptoBotConfig
     xrocet: XRocetConfig
     crystalpay: CrystalPayConfig
+    yookassa: YookassaConfig
     ton: TonConfig
     fragment: FragmentConfig
     database_path: str
@@ -113,6 +119,10 @@ def load_config() -> Config:
         crystalpay=CrystalPayConfig(
             login=os.getenv("CRYSTALPAY_LOGIN"),
             secret=os.getenv("CRYSTALPAY_SECRET")
+        ),
+        yookassa=YookassaConfig(
+            shop_id=os.getenv("YOOKASSA_SHOP_ID"),
+            secret_key=os.getenv("YOOKASSA_SECRET_KEY")
         ),
         ton=TonConfig(
             api_ton=os.getenv("API_TON"),

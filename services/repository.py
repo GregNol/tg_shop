@@ -7,12 +7,12 @@ class Repository:
         self.db = db
 
     # --- User Methods ---
-    async def get_or_create_user(self, telegram_id: int, username: str, first_name: str = None, last_name: str = None) -> aiosqlite.Row:
+    async def get_or_create_user(self, telegram_id: int, username: str, first_name: str = None, last_name: str = None, referrer_id: int = None) -> aiosqlite.Row:
         user = await self.get_user(telegram_id)
         if not user:
             await self.db.execute(
-                "INSERT INTO users (telegram_id, username, first_name, last_name) VALUES (?, ?, ?, ?)",
-                (telegram_id, username, first_name, last_name)
+                "INSERT INTO users (telegram_id, username, first_name, last_name, referrer_id) VALUES (?, ?, ?, ?, ?)",
+                (telegram_id, username, first_name, last_name, referrer_id)
             )
             await self.db.commit()
             user = await self.get_user(telegram_id)
@@ -26,6 +26,21 @@ class Repository:
     async def get_user(self, user_id: int) -> Optional[aiosqlite.Row]:
         cursor = await self.db.execute("SELECT * FROM users WHERE telegram_id = ?", (user_id,))
         return await cursor.fetchone()
+
+    async def get_referral_stats(self, user_id: int) -> tuple[int, float]:
+        """
+        Возвращает количество рефералов (сколько человек пригласил) 
+        и общую сумму заработанных на них денег.
+        """
+        cursor = await self.db.execute("SELECT COUNT(id) as ref_count FROM users WHERE referrer_id = ?", (user_id,))
+        ref_count_row = await cursor.fetchone()
+        ref_count = ref_count_row['ref_count'] if ref_count_row else 0
+        
+        cursor = await self.db.execute("SELECT referral_earned FROM users WHERE telegram_id = ?", (user_id,))
+        earned_row = await cursor.fetchone()
+        earned = earned_row['referral_earned'] if earned_row and earned_row['referral_earned'] else 0.0
+        
+        return ref_count, earned
 
     async def update_user_block_status(self, user_id: int, is_blocked: bool):
         await self.db.execute("UPDATE users SET is_blocked = ? WHERE telegram_id = ?", (int(is_blocked), user_id))

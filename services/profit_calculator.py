@@ -24,7 +24,7 @@ class ProfitCalculator:
     
     async def calculate_stars_profit(self, quantity: int, selling_price: float) -> Tuple[float, float]:
 
-        cost_per_star_ton = 0.0054 
+        cost_per_star_ton = 0.01
         
         cost_ton = quantity * cost_per_star_ton
         ton_rate = await self.get_ton_rub_rate()
@@ -37,9 +37,9 @@ class ProfitCalculator:
     async def calculate_premium_profit(self, months: int, selling_price: float) -> Tuple[float, float]:
 
         premium_costs = {
-            3: 4.3,   # 3 месяца ≈ 4.3 TON
-            6: 8.1,   # 6 месяцев ≈ 8.1 TON
-            12: 13.5  # 12 месяцев ≈ 13.5 TON
+            3: 9.10,   # 3 месяца ≈ 9.10 TON
+            6: 12.14,   # 6 месяцев ≈ 12.14 TON
+            12: 22.01  # 12 месяцев ≈ 22.01 TON
         }
         
         cost_ton = premium_costs.get(months, months * 1.43)  

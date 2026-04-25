@@ -17,6 +17,8 @@ async def init_db(database_path: str):
                 is_admin INTEGER DEFAULT 0,
                 is_blocked INTEGER DEFAULT 0,
                 discount REAL,
+                referrer_id INTEGER,
+                referral_earned REAL DEFAULT 0.0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)

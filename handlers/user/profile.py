@@ -15,22 +15,34 @@ from payments.lolz_payment import LolzPayment
 from payments.cryptobot_payment import CryptoBotPayment
 from payments.xrocet_payment import XRocetPayment
 from payments.crystalpay_payment import CrystalPayPayment
+from payments.yookassa_payment import YookassaPayment
 
 router = Router()
 
 @router.callback_query(F.data == "profile")
 async def profile_callback(call: types.CallbackQuery, repo: Repository, config: Config):
+    """
+    Отображает главную страницу профиля пользователя.
+    Получает или регистрирует пользователя, рассчитывает статистику покупок и показывает баланс.
+    """
     user = await repo.get_or_create_user(call.from_user.id, call.from_user.username, call.from_user.first_name)
     total_stars_bought = await repo.get_total_stars_bought(user['telegram_id'])
     reg_date_obj = datetime.fromisoformat(user['created_at'])
     reg_date_formatted = reg_date_obj.strftime('%d.%m.%Y')
+
+    ref_count, ref_earned = await repo.get_referral_stats(user['telegram_id'])
+    bot_me = await call.bot.get_me()
+    ref_link = f"https://t.me/{bot_me.username}?start=ref_{user['telegram_id']}"
 
     text = (
         f"👤 Ваш профиль\n\n"
         f"🆔 ID: <code>{user['telegram_id']}</code>\n"
         f"💰 Баланс: <b>{user['balance']:.2f} ₽</b>\n"
         f"⭐️ Куплено звезд: <b>{total_stars_bought:,}</b>\n"
-        f"📆 Первый запуск бота: <b>{reg_date_formatted}</b>"
+        f"📆 Первый запуск бота: <b>{reg_date_formatted}</b>\n\n"
+        f"👥 Приглашено друзей: <b>{ref_count}</b>\n"
+        f"💵 Заработано с рефералов: <b>{ref_earned:.2f} ₽</b>\n\n"
+        f"🔗 Ваша реферальная ссылка:\n<code>{ref_link}</code>"
     )
     
     await safe_delete_message(call)
@@ -43,6 +55,10 @@ async def profile_callback(call: types.CallbackQuery, repo: Repository, config: 
 
 @router.callback_query(F.data == "profile_topup_menu")
 async def show_payment_methods(callback: types.CallbackQuery, repo: Repository, enabled_payment_systems: dict):
+    """
+    Отображает меню выбора способа оплаты.
+    Перед показом проверяет, нет ли у пользователя уже активного, неоплаченного платежа.
+    """
     active_payment = await repo.get_user_active_payment(callback.from_user.id)
     if active_payment:
         await callback.answer("❌ У вас уже есть активный платеж!", show_alert=True)
@@ -55,6 +71,10 @@ async def show_payment_methods(callback: types.CallbackQuery, repo: Repository, 
 
 @router.callback_query(F.data.startswith("payment_"))
 async def handle_payment_method(callback: types.CallbackQuery, state: FSMContext, repo: Repository, enabled_payment_systems: dict):
+    """
+    Обрабатывает выбор конкретного метода оплаты (Lolz, CryptoBot, CrystalPay, xRocet).
+    Для CryptoBot запускает выбор монеты, для остальных — ожидание ввода суммы в рублях.
+    """
     payment_method = callback.data.split("_")[1]
     if not enabled_payment_systems.get(payment_method):
         await callback.answer("Эта платежная система временно отключена.", show_alert=True)
@@ -64,7 +84,7 @@ async def handle_payment_method(callback: types.CallbackQuery, state: FSMContext
     
     method_names = {
         "lolz": "🔥 Lolz Market", "cryptobot": "🤖 CryptoBot", 
-        "xrocet": "🚀 xRocet", "crystalpay": "💎 CrystalPay"
+        "xrocet": "🚀 xRocet", "crystalpay": "💎 CrystalPay", "yookassa": "💳 ЮKassa"
     }
     
     if payment_method == "cryptobot":
@@ -95,6 +115,10 @@ async def handle_payment_method(callback: types.CallbackQuery, state: FSMContext
 
 @router.callback_query(StateFilter(PaymentStates.choosing_crypto), F.data.startswith("crypto_"))
 async def handle_crypto_selection(callback: types.CallbackQuery, state: FSMContext):
+    """
+    Только для CryptoBot. Сохраняет выбранную криптовалюту в FSM-состояние (например USDT или TON)
+    и переводит в режим ввода суммы.
+    """
     crypto_asset = callback.data.split("_")[1]
     data = await state.get_data()
     fee_percentage = data["fee_percentage"]
@@ -112,6 +136,11 @@ async def handle_crypto_selection(callback: types.CallbackQuery, state: FSMConte
 
 @router.message(StateFilter(PaymentStates.waiting_amount))
 async def process_payment_amount(message: types.Message, state: FSMContext, repo: Repository, config: Config, enabled_payment_systems: dict):
+    """
+    Ключевая функция для генерации счета на оплату.
+    Проверяет минимальную сумму, рассчитывает комиссию и вызывает API выбранного шлюза
+    для создания реального счета (invoice), после чего сохраняет данные в БД.
+    """
     try:
         amount = float(message.text.replace(",", "."))
         if amount < config.payments.min_payment_amount:
@@ -135,14 +164,15 @@ async def process_payment_amount(message: types.Message, state: FSMContext, repo
     payment_handlers = {
         "lolz": LolzPayment(), "cryptobot": CryptoBotPayment(),
         "xrocet": XRocetPayment(config.xrocet.api_key),
-        "crystalpay": CrystalPayPayment(config.crystalpay.login, config.crystalpay.secret)
+        "crystalpay": CrystalPayPayment(config.crystalpay.login, config.crystalpay.secret),
+        "yookassa": YookassaPayment(config.yookassa.shop_id, config.yookassa.secret_key)
     }
     payment_handler = payment_handlers[payment_method]
     
     invoice_result = None
     if payment_method == "cryptobot":
         invoice_result = await payment_handler.create_invoice(total_amount, data.get("crypto_asset", "USDT"))
-    elif payment_method in ["xrocet", "crystalpay"]:
+    elif payment_method in ["xrocet", "crystalpay", "yookassa"]:
         invoice_result = await payment_handler.create_invoice(total_amount, "Пополнение баланса")
     else:
         invoice_result = await payment_handler.create_invoice(total_amount)
@@ -154,7 +184,7 @@ async def process_payment_amount(message: types.Message, state: FSMContext, repo
 
     invoice_id, payment_url = invoice_result["invoice_id"], invoice_result["payment_url"]
     expires_at = datetime.now() + timedelta(seconds=config.payments.payment_timeout_seconds)
-    method_names = {"lolz": "🔥 Lolz", "cryptobot": "🤖 CryptoBot", "xrocet": "🚀 xRocet", "crystalpay": "💎 CrystalPay"}
+    method_names = {"lolz": "🔥 Lolz", "cryptobot": "🤖 CryptoBot", "xrocet": "🚀 xRocet", "crystalpay": "💎 CrystalPay", "yookassa": "💳 ЮKassa"}
     
     payment_text = (f"💳 <b>Счет на оплату создан!</b>\n\n"
                     f"🏪 Способ: {method_names[payment_method]}\n"
@@ -176,12 +206,19 @@ async def process_payment_amount(message: types.Message, state: FSMContext, repo
 
 @router.callback_query(F.data.startswith("cancel_payment_"))
 async def cancel_payment(callback: types.CallbackQuery, repo: Repository):
+    """
+    Отменяет созданный счет по кнопке под сообщением (изменяет статус в БД).
+    """
     invoice_id = callback.data.split("_")[2]
     await repo.update_payment_status(invoice_id, "cancelled")
     await callback.message.edit_text("❌ <b>Платеж отменен</b>", reply_markup=user_kb.get_main_menu_only_keyboard())
 
 @router.callback_query(F.data == "cancel_action")
 async def cancel_action(callback: types.CallbackQuery, state: FSMContext):
+    """
+    Универсальная отмена действий для всех FSM состояний (например, вы нажали "вписать сумму", 
+    а потом нажали кнопку отмены).
+    """
     await state.clear()
     await callback.message.edit_caption(caption="Действие отменено.", reply_markup=user_kb.get_profile_kb())
 
@@ -193,6 +230,10 @@ async def profile_activate_promo_callback(call: types.CallbackQuery, state: FSMC
 
 @router.message(PromoUserStates.waiting_for_code)
 async def promo_user_enter_code(message: types.Message, state: FSMContext, repo: Repository, config: Config):
+    """
+    Обрабатывает ввод промокода, проверяет его лимиты и сроки. В случае валидности 
+    применяет бонус к балансу или привязывает пользователю скидку на будущую покупку.
+    """
     code = message.text.strip().upper()
     user_id = message.from_user.id
     promo = await repo.get_promo_by_code(code)
