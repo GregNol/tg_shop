@@ -9,7 +9,6 @@ import pytz
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import FSInputFile
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config import load_config
@@ -21,29 +20,6 @@ from services.repository import Repository
 from services.fragment_sender import FragmentSender
 from services.fragment_auth import FragmentAuth
 from utils.payment_checker import PaymentChecker
-
-async def backup_database(bot: Bot, config):
-    if not os.path.exists(config.database_path):
-        return
-
-    timestamp = datetime.now(pytz.timezone('Europe/Moscow')).strftime("%Y-%m-%d_%H-%M-%S")
-    backup_path = f"backup_{timestamp}.db"
-    
-    try:
-        shutil.copy(config.database_path, backup_path)
-        document = FSInputFile(backup_path)
-        caption = f"Ежедневный бэкап базы данных\n{timestamp} МСК"
-        
-        for admin_id in config.bot.admin_ids:
-            try:
-                await bot.send_document(chat_id=admin_id, document=document, caption=caption)
-            except Exception as e:
-                logging.error(f"Failed to send backup to admin {admin_id}: {e}")
-    except Exception as e:
-        logging.error(f"Failed to create or send database backup: {e}")
-    finally:
-        if os.path.exists(backup_path):
-            os.remove(backup_path)
 
 def check_payment_systems(config):
     enabled_systems = {}
@@ -87,10 +63,10 @@ async def start_bot():
     
     enabled_payment_systems = check_payment_systems(config)
 
-    db_connection = await get_db_connection(config.database_path)
-    await init_db(config.database_path)
+    db_pool = await get_db_connection(config.database_url)
+    await init_db(config.database_url)
     
-    repo = Repository(db_connection)
+    repo = Repository(db_pool)
     fragment_sender = FragmentSender(config, bot)
 
     dp["repo"] = repo
@@ -111,7 +87,6 @@ async def start_bot():
         await fragment_auth.refresh_token_if_needed(repo)
     
     scheduler = AsyncIOScheduler(timezone=pytz.timezone('Europe/Moscow'))
-    scheduler.add_job(backup_database, 'cron', hour=0, minute=0, kwargs={'bot': bot, 'config': config})
     scheduler.add_job(refresh_fragment_token, 'interval', hours=1)
     scheduler.start()
     
@@ -124,10 +99,10 @@ async def start_bot():
         payment_checker_task.cancel()
         scheduler.shutdown()
         await bot.session.close()
-        await db_connection.close()
+        await db_pool.close()
 
 if __name__ == "__main__":
     try:
         asyncio.run(start_bot())
     except (KeyboardInterrupt, SystemExit):
-        logging.info("Бот остановлен!")
+        logging.info("Бот остановлен.")

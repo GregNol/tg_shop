@@ -7,3 +7,21 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    depends_on:
+      - db
+
+  db:
+    image: postgres:15-alpine
+    container_name: tg_shop_db
+    restart: always
+    environment:
+      POSTGRES_DB: tg_shop
+      POSTGRES_USER: bot_user
+      POSTGRES_PASSWORD: bot_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  pgdata:

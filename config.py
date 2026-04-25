@@ -74,7 +74,7 @@ class Config:
     yookassa: YookassaConfig
     ton: TonConfig
     fragment: FragmentConfig
-    database_path: str
+    database_url: str
 
 def load_config() -> Config:
     admin_ids_str = os.getenv("ADMIN_IDS", "")
@@ -136,5 +136,5 @@ def load_config() -> Config:
             wallets=os.getenv("FRAGMENT_WALLETS"),
             address=os.getenv("FRAGMENT_ADDRES")
         ),
-        database_path=os.getenv("DATABASE_PATH", "database.db")
+        database_url=os.getenv("DATABASE_URL", "postgresql://bot_user:bot_password@db:5432/tg_shop")
     )

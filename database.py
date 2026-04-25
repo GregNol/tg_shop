@@ -1,15 +1,14 @@
-import aiosqlite
+import asyncpg
 import logging
 from datetime import datetime
 
-async def init_db(database_path: str):
-    async with aiosqlite.connect(database_path) as db:
-        db.row_factory = aiosqlite.Row
-        
-        await db.execute("""
+async def init_db(database_url: str):
+    conn = await asyncpg.connect(database_url)
+    try:
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                telegram_id INTEGER UNIQUE NOT NULL,
+                id SERIAL PRIMARY KEY,
+                telegram_id BIGINT UNIQUE NOT NULL,
                 username TEXT,
                 first_name TEXT,
                 last_name TEXT,
@@ -17,16 +16,16 @@ async def init_db(database_path: str):
                 is_admin INTEGER DEFAULT 0,
                 is_blocked INTEGER DEFAULT 0,
                 discount REAL,
-                referrer_id INTEGER,
+                referrer_id BIGINT,
                 referral_earned REAL DEFAULT 0.0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS payments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
                 payment_method TEXT,
                 amount REAL NOT NULL,
                 fee_amount REAL,
@@ -35,18 +34,18 @@ async def init_db(database_path: str):
                 payload_id TEXT,
                 crypto_asset TEXT,
                 status TEXT DEFAULT 'pending',
-                message_id INTEGER,
-                chat_id INTEGER,
+                message_id BIGINT,
+                chat_id BIGINT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 expires_at TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users (telegram_id)
             )
         """)
 
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS purchase_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
                 purchase_type TEXT NOT NULL,
                 item_description TEXT NOT NULL,
                 amount INTEGER,
@@ -57,9 +56,9 @@ async def init_db(database_path: str):
             )
         """)
         
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS promo_codes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 code TEXT UNIQUE NOT NULL,
                 promo_type TEXT NOT NULL,
                 value REAL NOT NULL,
@@ -71,17 +70,17 @@ async def init_db(database_path: str):
             )
         """)
         
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS promo_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
                 promo_code_id INTEGER NOT NULL,
                 used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (promo_code_id) REFERENCES promo_codes(id) ON DELETE CASCADE
             )
         """)
         
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -110,12 +109,15 @@ async def init_db(database_path: str):
         }
         
         for key, value in default_settings.items():
-            await db.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
+            await conn.execute("""
+                INSERT INTO settings (key, value) 
+                VALUES ($1, $2)
+                ON CONFLICT (key) DO NOTHING
+            """, key, value)
 
-        await db.commit()
         logging.info("База данных инициализирована с новой схемой.")
+    finally:
+        await conn.close()
 
-async def get_db_connection(database_path: str):
-    db = await aiosqlite.connect(database_path)
-    db.row_factory = aiosqlite.Row
-    return db
+async def get_db_connection(database_url: str):
+    return await asyncpg.connect(database_url)
