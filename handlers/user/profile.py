@@ -64,8 +64,8 @@ async def show_payment_methods(callback: types.CallbackQuery, repo: Repository, 
         await callback.answer("❌ У вас уже есть активный платеж!", show_alert=True)
         return
     
-    await callback.message.edit_caption(
-        caption="💳 <b>Выберите способ пополнения:</b>",
+    await callback.message.edit_text(
+        text="💳 <b>Выберите способ пополнения:</b>",
         reply_markup=user_kb.get_payment_methods_keyboard(enabled_payment_systems)
     )
 
