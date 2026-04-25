@@ -4,7 +4,7 @@ import logging
 import httpx
 from aiogram import Bot
 from tonutils.clients import TonapiClient
-from tonutils.wallet import WalletV4R2
+from tonutils.contracts import WalletV4R2
 from config import Config
 from .ton_api import get_ton_balance
 
