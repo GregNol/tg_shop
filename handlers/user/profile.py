@@ -63,11 +63,16 @@ async def show_payment_methods(callback: types.CallbackQuery, repo: Repository, 
     if active_payment:
         await callback.answer("❌ У вас уже есть активный платеж!", show_alert=True)
         return
-    
-    await callback.message.edit_text(
-        text="💳 <b>Выберите способ пополнения:</b>",
-        reply_markup=user_kb.get_payment_methods_keyboard(enabled_payment_systems)
-    )
+    try:
+        await callback.message.edit_text(
+            text="💳 <b>Выберите способ пополнения:</b>",
+            reply_markup=user_kb.get_payment_methods_keyboard(enabled_payment_systems)
+        )
+    except Exception:
+        await callback.message.edit_caption(
+            caption="💳 <b>Выберите способ пополнения:</b>",
+            reply_markup=user_kb.get_payment_methods_keyboard(enabled_payment_systems)
+        )
 
 @router.callback_query(F.data.startswith("payment_"))
 async def handle_payment_method(callback: types.CallbackQuery, state: FSMContext, repo: Repository, enabled_payment_systems: dict):
@@ -211,7 +216,10 @@ async def cancel_payment(callback: types.CallbackQuery, repo: Repository):
     """
     invoice_id = callback.data.split("_")[2]
     await repo.update_payment_status(invoice_id, "cancelled")
-    await callback.message.edit_text("❌ <b>Платеж отменен</b>", reply_markup=user_kb.get_main_menu_only_keyboard())
+    try:
+        await callback.message.edit_text("❌ <b>Платеж отменен</b>", reply_markup=user_kb.get_main_menu_only_keyboard())
+    except Exception:
+        await callback.message.edit_caption("❌ <b>Платеж отменен</b>", reply_markup=user_kb.get_main_menu_only_keyboard())
 
 @router.callback_query(F.data == "cancel_action")
 async def cancel_action(callback: types.CallbackQuery, state: FSMContext):
@@ -220,7 +228,10 @@ async def cancel_action(callback: types.CallbackQuery, state: FSMContext):
     а потом нажали кнопку отмены).
     """
     await state.clear()
-    await callback.message.edit_text(text="Действие отменено.", reply_markup=user_kb.get_profile_kb())
+    try:
+        await callback.message.edit_text(text="Действие отменено.", reply_markup=user_kb.get_profile_kb())
+    except Exception:
+        await callback.message.edit_caption(text="Действие отменено.", reply_markup=user_kb.get_profile_kb())
 
 @router.callback_query(F.data == "profile_activate_promo")
 async def profile_activate_promo_callback(call: types.CallbackQuery, state: FSMContext):
