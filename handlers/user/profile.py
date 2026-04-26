@@ -27,7 +27,7 @@ async def profile_callback(call: types.CallbackQuery, repo: Repository, config: 
     """
     user = await repo.get_or_create_user(call.from_user.id, call.from_user.username, call.from_user.first_name)
     total_stars_bought = await repo.get_total_stars_bought(user['telegram_id'])
-    reg_date_obj = datetime.fromisoformat(int(user['created_at']))
+    reg_date_obj = user['created_at']
     reg_date_formatted = reg_date_obj.strftime('%d.%m.%Y')
 
     ref_count, ref_earned = await repo.get_referral_stats(user['telegram_id'])
