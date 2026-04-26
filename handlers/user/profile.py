@@ -220,7 +220,7 @@ async def cancel_action(callback: types.CallbackQuery, state: FSMContext):
     а потом нажали кнопку отмены).
     """
     await state.clear()
-    await callback.message.edit_caption(caption="Действие отменено.", reply_markup=user_kb.get_profile_kb())
+    await callback.message.edit_text(text="Действие отменено.", reply_markup=user_kb.get_profile_kb())
 
 @router.callback_query(F.data == "profile_activate_promo")
 async def profile_activate_promo_callback(call: types.CallbackQuery, state: FSMContext):
