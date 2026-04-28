@@ -139,4 +139,3 @@ def get_tos_kb(referrer_id: int | None = None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Принять", callback_data=f"accept_tos_{ref}")]
     ])
-    ])
