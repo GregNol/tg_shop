@@ -21,6 +21,11 @@ class VisualsConfig:
     img_url_calculator: str
 
 @dataclass
+class LinksConfig:
+    privacy_policy_url: str
+    offer_url: str
+
+@dataclass
 class PaymentSettings:
     min_payment_amount: int
     payment_timeout_seconds: int
@@ -66,6 +71,7 @@ class FragmentConfig:
 class Config:
     bot: BotConfig
     visuals: VisualsConfig
+    links: LinksConfig
     payments: PaymentSettings
     lolz: LolzConfig
     cryptobot: CryptoBotConfig
@@ -101,6 +107,10 @@ def load_config() -> Config:
             img_url_premium=os.getenv("IMG_URL_PREMIUM"),
             img_url_profile=os.getenv("IMG_URL_PROFILE"),
             img_url_calculator=os.getenv("IMG_URL_CALCULATOR")
+        ),
+        links=LinksConfig(
+            privacy_policy_url=os.getenv("PRIVACY_POLICY_URL", ""),
+            offer_url=os.getenv("OFFER_URL", "")
         ),
         payments=PaymentSettings(
             min_payment_amount=int(os.getenv("MIN_PAYMENT_AMOUNT", 10)),

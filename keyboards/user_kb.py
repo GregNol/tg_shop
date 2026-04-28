@@ -132,3 +132,11 @@ def get_subscription_check_kb(channel_link: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="Подписаться", url=channel_link)],
         [InlineKeyboardButton(text="Проверить подписку", callback_data=SubscribeCallback(action="check").pack())]
     ])
+
+def get_tos_kb(referrer_id: int | None = None) -> InlineKeyboardMarkup:
+    # Use 'none' as a string if referrer_id is None to put it in the callback data
+    ref = referrer_id if referrer_id is not None else "none"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Принять", callback_data=f"accept_tos_{ref}")]
+    ])
+    ])

@@ -48,6 +48,12 @@ def check_payment_systems(config):
     else:
         logging.warning("Платежная система CrystalPay отключена: не указан CRYSTALPAY_LOGIN или CRYSTALPAY_SECRET.")
         
+    if config.yookassa.shop_id and config.yookassa.secret_key:
+        enabled_systems['yookassa'] = True
+        logging.info("Платежная система YooKassa включена.")
+    else:
+        logging.warning("Платежная система YooKassa отключена: не указан YOOKASSA_SHOP_ID или YOOKASSA_SECRET_KEY.")
+        
     return enabled_systems
 
 async def start_bot():

@@ -4,7 +4,7 @@ from aiogram.enums import ChatMemberStatus
 
 from config import Config
 from services.repository import Repository
-from keyboards.user_kb import get_main_menu_kb, SubscribeCallback
+from keyboards.user_kb import get_main_menu_kb, SubscribeCallback, get_tos_kb
 
 router = Router()
 
@@ -30,6 +30,12 @@ async def show_main_menu(message: types.Message, repo: Repository, config: Confi
 
 @router.message(CommandStart())
 async def cmd_start(message: types.Message, repo: Repository, config: Config):
+    user_in_db = await repo.get_user(message.from_user.id)
+    if user_in_db:
+        # Пользователь уже принял правила и есть в БД
+        await show_main_menu(message, repo, config, message.from_user)
+        return
+
     referrer_id = None
     args = message.text.split()
     if len(args) > 1 and args[1].startswith('ref_'):
@@ -44,14 +50,37 @@ async def cmd_start(message: types.Message, repo: Repository, config: Config):
         except (ValueError, IndexError):
             pass
 
+    tos_text = (
+        f"📜 <b><a href='{config.links.privacy_policy_url}'>Политика конфиденциальности</a> и <a href='{config.links.offer_url}'>Оферта</a></b>\n\n"
+        "Перед началом использования бота, пожалуйста, ознакомьтесь с нашей публичной офертой и политикой конфиденциальности.\n\n"
+        "Нажимая кнопку «Принять», вы соглашаетесь с условиями использования."
+    )
+    
+    await message.answer(
+        tos_text,
+        reply_markup=get_tos_kb(referrer_id),
+        disable_web_page_preview=True
+    )
+
+@router.callback_query(F.data.startswith("accept_tos_"))
+async def accept_tos_callback(call: types.CallbackQuery, repo: Repository, config: Config):
+    ref_data = call.data.split("accept_tos_")[1]
+    referrer_id = int(ref_data) if ref_data != "none" else None
+
     await repo.get_or_create_user(
-        telegram_id=message.from_user.id,
-        username=message.from_user.username,
-        first_name=message.from_user.first_name,
-        last_name=message.from_user.last_name,
+        telegram_id=call.from_user.id,
+        username=call.from_user.username,
+        first_name=call.from_user.first_name,
+        last_name=call.from_user.last_name,
         referrer_id=referrer_id
     )
-    await show_main_menu(message, repo, config, message.from_user)
+
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
+
+    await show_main_menu(call.message, repo, config, call.from_user)
 
 @router.callback_query(F.data == "main_menu")
 async def main_menu_callback(call: types.CallbackQuery, repo: Repository, config: Config):
