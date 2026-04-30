@@ -100,24 +100,39 @@ async def handle_payment_method(callback: types.CallbackQuery, state: FSMContext
         cryptobot_handler = CryptoBotPayment()
         assets_result = await cryptobot_handler.get_supported_assets_for_rub()
         status_text = f"✅ Доступно {len(assets_result['assets'])} криптовалют" if assets_result["success"] else "⚠️ Ошибка API"
-        
-        await callback.message.edit_caption(
-            caption=(f"💳 <b>Пополнение через {method_names[payment_method]}</b>\n\n"
-                     f"💸 Комиссия: <b>{fee_percentage}%</b>\n"
-                     f"📊 Статус: {status_text}\n\n"
-                     "🪙 Выберите криптовалюту для оплаты:"),
-            reply_markup=user_kb.get_crypto_selection_keyboard(assets_result.get("assets"))
-        )
+        try:
+            await callback.message.edit_caption(
+                caption=(f"💳 <b>Пополнение через {method_names[payment_method]}</b>\n\n"
+                        f"💸 Комиссия: <b>{fee_percentage}%</b>\n"
+                        f"📊 Статус: {status_text}\n\n"
+                        "🪙 Выберите криптовалюту для оплаты:"),
+                reply_markup=user_kb.get_crypto_selection_keyboard(assets_result.get("assets"))
+            )
+        except Exception:
+            await callback.message.edit_text(
+                text=(f"💳 <b>Пополнение через {method_names[payment_method]}</b>\n\n"
+                      f"💸 Комиссия: <b>{fee_percentage}%</b>\n"
+                      f"📊 Статус: {status_text}\n\n"
+                      "🪙 Выберите криптовалюту для оплаты:"),
+                reply_markup=user_kb.get_crypto_selection_keyboard(assets_result.get("assets"))
+            )
     else:
         await state.set_state(PaymentStates.waiting_amount)
         await state.update_data(payment_method=payment_method, fee_percentage=fee_percentage)
-        
-        await callback.message.edit_caption(
-            caption=(f"💳 <b>Пополнение через {method_names[payment_method]}</b>\n\n"
-                     f"💸 Комиссия: <b>{fee_percentage}%</b>\n\n"
-                     "💰 Введите сумму пополнения (минимум 10 ₽):"),
-            reply_markup=user_kb.get_cancel_keyboard()
-        )
+        try:
+            await callback.message.edit_caption(
+                caption=(f"💳 <b>Пополнение через {method_names[payment_method]}</b>\n\n"
+                        f"💸 Комиссия: <b>{fee_percentage}%</b>\n\n"
+                        "💰 Введите сумму пополнения (минимум 10 ₽):"),
+                reply_markup=user_kb.get_cancel_keyboard()
+            )
+        except Exception:
+            await callback.message.edit_text(
+                text=(f"💳 <b>Пополнение через {method_names[payment_method]}</b>\n\n"
+                      f"💸 Комиссия: <b>{fee_percentage}%</b>\n\n"
+                      "💰 Введите сумму пополнения (минимум 10 ₽):"),
+                reply_markup=user_kb.get_cancel_keyboard()
+            )
 
 @router.callback_query(StateFilter(PaymentStates.choosing_crypto), F.data.startswith("crypto_"))
 async def handle_crypto_selection(callback: types.CallbackQuery, state: FSMContext):
