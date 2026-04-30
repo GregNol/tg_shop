@@ -30,6 +30,7 @@ class LinksConfig:
 class PaymentSettings:
     min_payment_amount: int
     payment_timeout_seconds: int
+    referral_percentage: float
 
 @dataclass
 class LolzConfig:
@@ -121,7 +122,8 @@ def load_config() -> Config:
         ),
         payments=PaymentSettings(
             min_payment_amount=int(os.getenv("MIN_PAYMENT_AMOUNT", 10)),
-            payment_timeout_seconds=int(os.getenv("PAYMENT_TIMEOUT_SECONDS", 900))
+            payment_timeout_seconds=int(os.getenv("PAYMENT_TIMEOUT_SECONDS", 900)),
+            referral_percentage=float(os.getenv("REFERRAL_PERCENTAGE", 5.0))
         ),
         lolz=LolzConfig(
             api_key=os.getenv("LOLZ_API_KEY"),
