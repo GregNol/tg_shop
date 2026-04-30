@@ -138,11 +138,11 @@ def load_config() -> Config:
             secret=os.getenv("CRYSTALPAY_SECRET")
         ),
         yookassa=YookassaConfig(
-            shop_id=os.getenv("YOOKASSA_SHOP_ID"),
-            secret_key=os.getenv("YOOKASSA_SECRET_KEY")
+            shop_id=os.getenv("YOOKASSA_SHOP_ID", ""),
+            secret_key=os.getenv("YOOKASSA_SECRET_KEY", "")
         ),
         rollypay=RollyPayConfig(
-            api_key=os.getenv("ROLLYPAY_API_KEY")
+            api_key=os.getenv("ROLLYPAY_API_KEY", "")
         ),
         ton=TonConfig(
             api_ton=os.getenv("API_TON"),
