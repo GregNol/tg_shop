@@ -2,7 +2,7 @@ import asyncpg
 import logging
 from datetime import datetime
 
-async def init_db(database_url: str):
+async def init_db(database_url: str, support_contact: str = ''):
     conn = await asyncpg.connect(database_url)
     try:
         await conn.execute("""
@@ -98,7 +98,7 @@ async def init_db(database_url: str):
             'news_channel_id': '',
             'news_channel_link': '',
             'force_subscribe': '0',
-            'support_contact': '',
+            'support_contact': support_contact,
             'fragment_token': '',
             'fragment_token_expires_at': '',
             'fragment_token_last_update': '',

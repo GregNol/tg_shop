@@ -9,6 +9,8 @@ from payments.lolz_payment import LolzPayment
 from payments.cryptobot_payment import CryptoBotPayment
 from payments.xrocet_payment import XRocetPayment
 from payments.crystalpay_payment import CrystalPayPayment
+from payments.yookassa_payment import YookassaPayment
+from payments.rolly_payment import RollyPayment
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -25,7 +27,9 @@ class PaymentChecker:
             "lolz": LolzPayment(),
             "cryptobot": CryptoBotPayment(),
             "xrocet": XRocetPayment(self.config.xrocet.api_key),
-            "crystalpay": CrystalPayPayment(self.config.crystalpay.login, self.config.crystalpay.secret)
+            "crystalpay": CrystalPayPayment(self.config.crystalpay.login, self.config.crystalpay.secret),
+            "yookassa": YookassaPayment(self.config.yookassa.shop_id, self.config.yookassa.secret_key),
+            "rollypay": RollyPayment(self.config.rollypay.api_key)
         }
     
     async def start_checking(self):
@@ -96,7 +100,9 @@ class PaymentChecker:
                 "lolz": "🔥 Lolz", 
                 "cryptobot": "🤖 CryptoBot", 
                 "xrocet": "🚀 xRocet", 
-                "crystalpay": "💎 CrystalPay"
+                "crystalpay": "💎 CrystalPay",
+                "yookassa": "💳 ЮKassa",
+                "rollypay": "🔄 RollyPay"
             }
             payment_system_name = method_names.get(payment['payment_method'], payment['payment_method'].capitalize())
             

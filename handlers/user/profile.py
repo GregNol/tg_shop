@@ -16,6 +16,7 @@ from payments.cryptobot_payment import CryptoBotPayment
 from payments.xrocet_payment import XRocetPayment
 from payments.crystalpay_payment import CrystalPayPayment
 from payments.yookassa_payment import YookassaPayment
+from payments.rolly_payment import RollyPayment
 
 router = Router()
 
@@ -89,7 +90,7 @@ async def handle_payment_method(callback: types.CallbackQuery, state: FSMContext
     
     method_names = {
         "lolz": "🔥 Lolz Market", "cryptobot": "🤖 CryptoBot", 
-        "xrocet": "🚀 xRocet", "crystalpay": "💎 CrystalPay", "yookassa": "💳 ЮKassa"
+        "xrocet": "🚀 xRocet", "crystalpay": "💎 CrystalPay", "yookassa": "💳 ЮKassa", "rollypay": "🔄 RollyPay"
     }
     
     if payment_method == "cryptobot":
@@ -170,14 +171,15 @@ async def process_payment_amount(message: types.Message, state: FSMContext, repo
         "lolz": LolzPayment(), "cryptobot": CryptoBotPayment(),
         "xrocet": XRocetPayment(config.xrocet.api_key),
         "crystalpay": CrystalPayPayment(config.crystalpay.login, config.crystalpay.secret),
-        "yookassa": YookassaPayment(config.yookassa.shop_id, config.yookassa.secret_key)
+        "yookassa": YookassaPayment(config.yookassa.shop_id, config.yookassa.secret_key),
+        "rollypay": RollyPayment(config.rollypay.api_key)
     }
     payment_handler = payment_handlers[payment_method]
     
     invoice_result = None
     if payment_method == "cryptobot":
         invoice_result = await payment_handler.create_invoice(total_amount, data.get("crypto_asset", "USDT"))
-    elif payment_method in ["xrocet", "crystalpay", "yookassa"]:
+    elif payment_method in ["xrocet", "crystalpay", "yookassa", "rollypay"]:
         invoice_result = await payment_handler.create_invoice(total_amount, "Пополнение баланса")
     else:
         invoice_result = await payment_handler.create_invoice(total_amount)

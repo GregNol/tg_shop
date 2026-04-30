@@ -11,6 +11,7 @@ load_dotenv()
 class BotConfig:
     bot_token: str
     admin_ids: List[int]
+    support_contact: str
 
 @dataclass
 class VisualsConfig:
@@ -68,6 +69,10 @@ class FragmentConfig:
     address: str
 
 @dataclass
+class RollyPayConfig:
+    api_key: str
+
+@dataclass
 class Config:
     bot: BotConfig
     visuals: VisualsConfig
@@ -78,6 +83,7 @@ class Config:
     xrocet: XRocetConfig
     crystalpay: CrystalPayConfig
     yookassa: YookassaConfig
+    rollypay: RollyPayConfig
     ton: TonConfig
     fragment: FragmentConfig
     database_url: str
@@ -99,7 +105,8 @@ def load_config() -> Config:
     return Config(
         bot=BotConfig(
             bot_token=os.getenv("BOT_TOKEN"),
-            admin_ids=admin_ids_list
+            admin_ids=admin_ids_list,
+            support_contact=os.getenv("SUPPORT_CONTACT", "")
         ),
         visuals=VisualsConfig(
             img_url_main=os.getenv("IMG_URL_MAIN"),
@@ -133,6 +140,9 @@ def load_config() -> Config:
         yookassa=YookassaConfig(
             shop_id=os.getenv("YOOKASSA_SHOP_ID"),
             secret_key=os.getenv("YOOKASSA_SECRET_KEY")
+        ),
+        rollypay=RollyPayConfig(
+            api_key=os.getenv("ROLLYPAY_API_KEY")
         ),
         ton=TonConfig(
             api_ton=os.getenv("API_TON"),

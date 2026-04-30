@@ -44,7 +44,8 @@ def get_payment_methods_keyboard(enabled_systems: Dict[str, bool]) -> InlineKeyb
         'cryptobot': InlineKeyboardButton(text="🤖 CryptoBot", callback_data="payment_cryptobot"),
         'xrocet': InlineKeyboardButton(text="🚀 xRocet", callback_data="payment_xrocet"),
         'crystalpay': InlineKeyboardButton(text="💎 CrystalPay", callback_data="payment_crystalpay"),
-        'yookassa': InlineKeyboardButton(text="💳 ЮKassa", callback_data="payment_yookassa")
+        'yookassa': InlineKeyboardButton(text="💳 ЮKassa", callback_data="payment_yookassa"),
+        'rollypay': InlineKeyboardButton(text="💳 RollyPay", callback_data="payment_rollypay")
     }
 
     for method_code, button in all_methods.items():
