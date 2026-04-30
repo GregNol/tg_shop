@@ -206,7 +206,11 @@ async def process_payment_amount(message: types.Message, state: FSMContext, repo
 
     invoice_id, payment_url = invoice_result["invoice_id"], invoice_result["payment_url"]
     expires_at = datetime.now() + timedelta(seconds=config.payments.payment_timeout_seconds)
-    method_names = {"lolz": "🔥 Lolz", "cryptobot": "🤖 CryptoBot", "xrocet": "🚀 xRocet", "crystalpay": "💎 CrystalPay", "yookassa": "💳 ЮKassa"}
+    method_names = {
+        "lolz": "🔥 Lolz", "cryptobot": "🤖 CryptoBot", 
+        "xrocet": "🚀 xRocet", "crystalpay": "💎 CrystalPay", 
+        "yookassa": "💳 ЮKassa", "rollypay": "🔄 RollyPay"
+    }
     
     payment_text = (f"💳 <b>Счет на оплату создан!</b>\n\n"
                     f"🏪 Способ: {method_names[payment_method]}\n"
