@@ -58,7 +58,10 @@ class PaymentChecker:
             payment_method, invoice_id = payment['payment_method'], payment['invoice_id']
             payload_id = payment.get('payload_id')
             
-            expires_at = datetime.fromisoformat(payment['expires_at'])
+            expires_at = payment['expires_at']
+            if isinstance(expires_at, str):
+                expires_at = datetime.fromisoformat(expires_at)
+                
             if datetime.now() > expires_at:
                 if await self.repo.update_payment_status(invoice_id, "expired"):
                     await self.notify_user_payment_expired(payment['user_id'], invoice_id)
