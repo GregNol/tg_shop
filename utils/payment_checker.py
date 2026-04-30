@@ -86,6 +86,15 @@ class PaymentChecker:
                     logger.info(f"Платеж {invoice_id} успешно обработан, зачислено {processed_payment['amount']} ₽")
                     await self.notify_user_payment_success(processed_payment['user_id'], processed_payment['amount'], invoice_id)
                     await self._notify_admin_payment_success(processed_payment)
+                    
+                    ref_reward = await self.repo.process_referral_reward(
+                        processed_payment['user_id'], 
+                        processed_payment['amount'], 
+                        self.config.payments.referral_percentage
+                    )
+                    if ref_reward:
+                        referrer_id, reward = ref_reward
+                        await self.notify_referrer_success(referrer_id, processed_payment['amount'], reward)
 
         except Exception as e:
             logger.error(f"Ошибка обработки платежа {payment.get('invoice_id', 'unknown')}: {e}")
@@ -152,6 +161,17 @@ class PaymentChecker:
                 await self.bot.edit_message_text(text=f"⏰ <b>Время действия счета истекло</b>\n\n📄 ID счета: <code>{invoice_id}</code>", chat_id=payment_data['chat_id'], message_id=payment_data['message_id'], reply_markup=get_main_menu_only_keyboard())
         except Exception:
             pass
+
+    async def notify_referrer_success(self, referrer_id: int, original_amount: float, reward: float):
+        try:
+            from keyboards.user_kb import get_main_menu_only_keyboard
+            message_text = (f"🎉 <b>Ваш реферал пополнил баланс!</b>\n\n"
+                            f"💳 Сумма пополнения: <b>{original_amount:.2f} ₽</b>\n"
+                            f"🎁 Ваше вознаграждение ({self.config.payments.referral_percentage}%): <b>{reward:.2f} ₽</b>\n\n"
+                            f"<i>Вознаграждение зачислено на ваш внутренний баланс.</i>")
+            await self.bot.send_message(referrer_id, message_text, reply_markup=get_main_menu_only_keyboard())
+        except Exception as e:
+            logger.error(f"Ошибка отправки уведомления рефоводу {referrer_id}: {e}")
     
     def stop_checking(self):
         self.is_running = False

@@ -99,6 +99,21 @@ class Repository:
             await self.db.execute("UPDATE users SET balance = balance + $1 WHERE telegram_id = $2", float(payment["amount"]), payment["user_id"])
         return dict(payment)
 
+    async def process_referral_reward(self, user_id: int, amount: float, percentage: float) -> Optional[tuple[int, float]]:
+        user = await self.get_user(user_id)
+        if not user or not user['referrer_id']:
+            return None
+            
+        referrer_id = user['referrer_id']
+        reward = round(amount * (percentage / 100), 2)
+        if reward > 0:
+            await self.db.execute(
+                "UPDATE users SET balance = balance + $1, referral_earned = referral_earned + $1 WHERE telegram_id = $2",
+                reward, referrer_id
+            )
+            return referrer_id, reward
+        return None
+
     # --- Promo Methods ---
     async def get_promo_by_code(self, code: str) -> Optional[asyncpg.Record]:
         return await self.db.fetchrow("SELECT * FROM promo_codes WHERE code = $1 AND is_active = 1", code)
