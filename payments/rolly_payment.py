@@ -2,7 +2,7 @@ import logging
 import uuid
 import asyncio
 from typing import Optional, Dict, Any
-from rollypay import RollyPayClient, RollyPayError
+from rollypay import RollyPayClient
 
 logger = logging.getLogger(__name__)
 
@@ -37,17 +37,11 @@ class RollyPayment:
                 "amount": amount
             }
                         
-        except RollyPayError as e:
-            logger.error(f"RollyPay error creating invoice: {e}")
-            return {
-                "success": False,
-                "error": f"Ошибка платежной системы: {e}"
-            }
         except Exception as e:
             logger.error(f"Error creating RollyPay invoice: {e}")
             return {
                 "success": False,
-                "error": "Ошибка соединения"
+                "error": f"Ошибка соединения: {e}"
             }
     
     async def check_payment_status(self, payment_id: str) -> Dict[str, Any]:
@@ -66,15 +60,9 @@ class RollyPayment:
                 "rollypay_status": status
             }
                         
-        except RollyPayError as e:
-            logger.error(f"RollyPay error checking payment: {e}")
-            return {
-                "success": False,
-                "error": f"Ошибка платежной системы API: {e}"
-            }
         except Exception as e:
             logger.error(f"Error checking RollyPay payment: {e}")
             return {
                 "success": False,
-                "error": "Ошибка соединения"
+                "error": f"Ошибка соединения: {e}"
             }
