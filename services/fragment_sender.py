@@ -36,7 +36,7 @@ class FragmentSender:
                 logging.critical("API_TON is not set!")
                 return False
             
-            client = TonapiClient(api_key=self.config.ton.api_ton)
+            client = TonapiClient(network='mainnet', api_key=self.config.ton.api_ton)
             
             if not self.config.ton.wallet_seed:
                 logging.critical("WALLET_SEED is not set!")
