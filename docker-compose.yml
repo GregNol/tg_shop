@@ -28,7 +28,7 @@ services:
     container_name: tg_shop_fragment_test
     env_file:
       - .env
-    command: python utils/fragment_test.py
+    command: python fragment_test.py
     stdin_open: true # docker run -i
     tty: true        # docker run -t
 
