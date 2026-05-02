@@ -23,5 +23,14 @@ services:
     ports:
       - "5432:5432"
 
+  fragment-test:
+    build: .
+    container_name: tg_shop_fragment_test
+    env_file:
+      - .env
+    command: python utils/fragment_test.py
+    stdin_open: true # docker run -i
+    tty: true        # docker run -t
+
 volumes:
   pgdata:

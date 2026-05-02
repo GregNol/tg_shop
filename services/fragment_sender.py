@@ -108,7 +108,7 @@ class FragmentSender:
 
                 headers_step2 = self.base_headers.copy()
                 headers_step2["Referer"] = f"https://fragment.com/stars/buy?query={username}"
-                data_step2 = {"recipient": recipient, "amount": quantity, "method": "initBuyStarsRequest"}
+                data_step2 = {"recipient": recipient, "quantity": quantity, "method": "initBuyStarsRequest"}
 
                 response_step2 = await client.post(self.url, data=data_step2, headers=headers_step2)
                 response_step2.raise_for_status()
@@ -123,7 +123,7 @@ class FragmentSender:
                     return False
                 
                 headers_step3 = self.base_headers.copy()
-                headers_step3["Referer"] = f"https://fragment.com/stars/buy?recipient={recipient}&amount={quantity}"
+                headers_step3["Referer"] = f"https://fragment.com/stars/buy?recipient={recipient}&quantity={quantity}"
                 data_step3 = {
                     "address": self.config.fragment.address, "chain": "-239",
                     "walletStateInit": self.config.fragment.wallets, "publicKey": self.config.fragment.public_key,
