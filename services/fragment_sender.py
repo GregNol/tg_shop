@@ -51,7 +51,8 @@ class FragmentSender:
             return False
 
         amount_decimal = float(amount) / 1_000_000_000
-        current_balance, balance_error = await get_ton_balance(str(sender_address))
+        sender_address_str = sender_address.to_str() if hasattr(sender_address, 'to_str') else str(sender_address).strip('<>').replace('Address<', '')
+        current_balance, balance_error = await get_ton_balance(sender_address_str)
 
         if balance_error:
             logging.error(f"Could not check TON wallet balance: {balance_error}")
@@ -62,7 +63,7 @@ class FragmentSender:
             error_text = (f"<b>⚠️ Недостаточно средств на кошельке!</b>\n\n"
                           f"Требуется: <code>{amount_decimal:.4f} TON</code>\n"
                           f"В наличии: <code>{current_balance:.4f} TON</code>\n\n"
-                          f"Пополните кошелек: <code>{sender_address}</code>")
+                          f"Пополните кошелек: <code>{sender_address_str}</code>")
             for admin_id in self.config.bot.admin_ids:
                 try:
                     await self.bot.send_message(admin_id, error_text)
