@@ -26,6 +26,13 @@ class Repository:
     async def get_user(self, user_id: int) -> Optional[asyncpg.Record]:
         return await self.db.fetchrow("SELECT * FROM users WHERE telegram_id = $1", user_id)
 
+    async def get_total_top_up(self, user_id: int) -> float:
+        row = await self.db.fetchrow(
+            "SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE user_id = $1 AND status = 'paid'",
+            user_id
+        )
+        return float(row['total']) if row and row['total'] else 0.0
+
     async def get_referral_stats(self, user_id: int) -> tuple[int, float]:
         """
         Возвращает количество рефералов (сколько человек пригласил) 
