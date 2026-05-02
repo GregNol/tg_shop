@@ -204,11 +204,11 @@ async def view_user_payments(call: types.CallbackQuery, callback_data: UserPayme
         text_lines = []
         for p in payments:
             status_text = status_map.get(p['status'], p['status'])
-            payment_system = p['payment_system'].capitalize() if p['payment_system'] else 'N/A'
+            payment_system = p['payment_method'].capitalize() if p.get('payment_method') else 'N/A'
             date_formatted = p['created_at'].strftime('%d.%m.%Y %H:%M')
             text_lines.append(
                 f"▫️ <b>{p['amount']:.2f} ₽</b> ({payment_system}) - {status_text}\n"
-                f"   <code>{p['uuid']}</code> | {date_formatted}"
+                f"   <code>{p['invoice_id']}</code> | {date_formatted}"
             )
         
         text += "\n\n".join(text_lines)

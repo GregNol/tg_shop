@@ -33,6 +33,17 @@ class Repository:
         )
         return float(row['total']) if row and row['total'] else 0.0
 
+    async def count_user_payments(self, user_id: int) -> int:
+        row = await self.db.fetchrow("SELECT COUNT(*) as count FROM payments WHERE user_id = $1", user_id)
+        return row['count'] if row else 0
+
+    async def get_user_payments_page(self, user_id: int, page: int, page_size: int) -> list:
+        offset = (page - 1) * page_size
+        return await self.db.fetch(
+            "SELECT * FROM payments WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+            user_id, page_size, offset
+        )
+
     async def get_referral_stats(self, user_id: int) -> tuple[int, float]:
         """
         Возвращает количество рефералов (сколько человек пригласил) 
