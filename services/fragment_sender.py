@@ -5,7 +5,7 @@ import httpx
 from aiogram import Bot
 from ton_core import NetworkGlobalID
 from tonutils.clients import TonapiClient
-from tonutils.contracts import WalletW5
+from tonutils.contracts import WalletV5R1
 from config import Config
 from .ton_api import get_ton_balance
 
@@ -43,7 +43,7 @@ class FragmentSender:
                 logging.critical("WALLET_SEED is not set!")
                 return False
             logging.info(f"Initializing wallet from seed: {self.config.ton.wallet_seed}")
-            wallet, _, _, _ = WalletW5.from_mnemonic(client, self.config.ton.wallet_seed.split())
+            wallet, _, _, _ = WalletV5R1.from_mnemonic(client, self.config.ton.wallet_seed.split())
             sender_address = wallet.address
 
         except Exception as e:
