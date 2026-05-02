@@ -51,7 +51,7 @@ class FragmentSender:
             return False
 
         amount_decimal = float(amount) / 1_000_000_000
-        sender_address_str = sender_address.to_str() if hasattr(sender_address, 'to_str') else str(sender_address).strip('<>').replace('Address<', '')
+        sender_address_str = sender_address.to_str(is_bounceable=False) if hasattr(sender_address, 'to_str') else str(sender_address).strip('<>').replace('Address<', '')
         current_balance, balance_error = await get_ton_balance(sender_address_str)
 
         if balance_error:
