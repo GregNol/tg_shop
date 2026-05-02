@@ -44,14 +44,18 @@ class FragmentSender:
                 return False
             logging.info(f"Initializing wallet from seed: {self.config.ton.wallet_seed}")
             wallet, _, _, _ = WalletV5R1.from_mnemonic(client, self.config.ton.wallet_seed.split())
-            sender_address = wallet.address
 
         except Exception as e:
             logging.error(f"Failed to initialize wallet: {e}")
             return False
 
         amount_decimal = float(amount) / 1_000_000_000
-        sender_address_str = sender_address.to_str(is_bounceable=False) if hasattr(sender_address, 'to_str') else str(sender_address).strip('<>').replace('Address<', '')
+        
+        sender_address_str = self.config.ton.ton_wallet_address
+        if not sender_address_str:
+            logging.error("TON_WALLET_ADDRESS is not set in configuration.")
+            return False
+            
         current_balance, balance_error = await get_ton_balance(sender_address_str)
 
         if balance_error:
@@ -83,12 +87,16 @@ class FragmentSender:
             match = re.search(comment_template, clean_text)
             final_text = match.group(0) if match else clean_text
             
-            tx_hash = await wallet.transfer(destination=recipient_addr, amount=amount_decimal, body=final_text)
-            logging.info(f"Transaction sent successfully: {tx_hash}")
+            await client.connect()
+            tx_hash = await wallet.transfer(destination=recipient_addr, amount=int(amount), body=final_text)
+            await client.close()
+            logging.info(f"Transaction sent successfully: {tx_hash.normalized_hash if hasattr(tx_hash, 'normalized_hash') else tx_hash}")
             return True
             
         except Exception as e:
             logging.error(f"TON transaction failed: {e}")
+            if 'client' in locals():
+                await client.close()
             return False
 
     async def send_stars(self, username: str, quantity: int) -> bool:
