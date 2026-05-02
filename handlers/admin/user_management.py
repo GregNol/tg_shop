@@ -22,7 +22,7 @@ async def show_user_info_menu(message: types.Message, state: FSMContext, repo: R
 
     total_top_up = await repo.get_total_top_up(user_id)
     total_stars_bought = await repo.get_total_stars_bought(user_id)
-    reg_date = datetime.fromisoformat(user['created_at']).strftime('%d.%m.%Y')
+    reg_date = user['created_at'].strftime('%d.%m.%Y')
     status = "🟢 Активен" if not user['is_blocked'] else "🔴 Заблокирован"
     
     text = (
@@ -205,7 +205,7 @@ async def view_user_payments(call: types.CallbackQuery, callback_data: UserPayme
         for p in payments:
             status_text = status_map.get(p['status'], p['status'])
             payment_system = p['payment_system'].capitalize() if p['payment_system'] else 'N/A'
-            date_formatted = datetime.fromisoformat(p['created_at']).strftime('%d.%m.%Y %H:%M')
+            date_formatted = p['created_at'].strftime('%d.%m.%Y %H:%M')
             text_lines.append(
                 f"▫️ <b>{p['amount']:.2f} ₽</b> ({payment_system}) - {status_text}\n"
                 f"   <code>{p['uuid']}</code> | {date_formatted}"
