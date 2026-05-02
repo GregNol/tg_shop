@@ -23,7 +23,7 @@ class FragmentSender:
         self.base_headers = {
             "Accept": "application/json, text/javascript, */*; q=0.01",
             "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Encoding": "gzip, deflate",
             "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
             "Origin": "https://fragment.com",
             "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
@@ -146,7 +146,7 @@ class FragmentSender:
                 comment_template = rf"{quantity} Telegram Stars.*"
                 return await self._send_ton_transaction(addr, amount, payload, comment_template)
         except Exception as e:
-            logging.error(f"Stars purchase failed for @{username}: {e}")
+            logging.error(f"Stars purchase failed for @{username}: {e}", exc_info=True)
             await self._notify_admins(f"❌ Ошибка покупки звёзд для @{username}: {str(e)}")
             return False
 
