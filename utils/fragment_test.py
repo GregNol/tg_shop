@@ -16,7 +16,7 @@ async def test_fragment_comprehensive():
     logging.basicConfig(level=logging.INFO)
     
     config = load_config()
-    bot = Bot(token=config.bot_token)
+    bot = Bot(token=config.bot.bot_token)
     
     print("🔍 Comprehensive Fragment Test")
     print("=" * 50)
@@ -36,7 +36,7 @@ async def test_fragment_comprehensive():
         print(f"   Fragment balance: ✅ {fragment_balance:.4f} TON")
     
     print("\n3. Testing TON wallet balance...")
-    ton_balance, ton_error = await get_ton_balance(config.fragment_address)
+    ton_balance, ton_error = await get_ton_balance(config.fragment.address)
     if ton_error:
         print(f"   TON balance: ❌ {ton_error}")
     else:
@@ -48,7 +48,7 @@ async def test_fragment_comprehensive():
     try:
         import httpx
         async with httpx.AsyncClient(
-            cookies=config.fragment_cookies,
+            cookies=config.fragment.cookies,
             headers={
                 "Accept": "application/json, text/javascript, */*; q=0.01",
                 "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
@@ -57,7 +57,7 @@ async def test_fragment_comprehensive():
             },
             timeout=10.0
         ) as client:
-            url = f"https://fragment.com/api?hash={config.fragment_hash}"
+            url = f"https://fragment.com/api?hash={config.fragment.hash}"
             data = {"query": test_username, "method": "searchStarsRecipient"}
             response = await client.post(url, data=data)
             result = response.json()
@@ -72,12 +72,12 @@ async def test_fragment_comprehensive():
     
     print("\n5. Configuration check...")
     required_fields = [
-        ('fragment_hash', config.fragment_hash),
-        ('fragment_address', config.fragment_address),
-        ('fragment_wallets', config.fragment_wallets),
-        ('fragment_public_key', config.fragment_public_key),
-        ('wallet_seed', config.wallet_seed),
-        ('api_ton', config.api_ton)
+        ('fragment_hash', config.fragment.hash),
+        ('fragment_address', config.fragment.address),
+        ('fragment_wallets', config.fragment.wallets),
+        ('fragment_public_key', config.fragment.public_key),
+        ('wallet_seed', config.ton.wallet_seed),
+        ('api_ton', config.ton.api_ton)
     ]
     
     for field_name, field_value in required_fields:
@@ -85,10 +85,10 @@ async def test_fragment_comprehensive():
         print(f"   {field_name}: {status}")
     
     required_cookies = [
-        ('stel_ssid', config.fragment_cookies.get('stel_ssid')),
-        ('stel_dt', config.fragment_cookies.get('stel_dt')),
-        ('stel_ton_token', config.fragment_cookies.get('stel_ton_token')),
-        ('stel_token', config.fragment_cookies.get('stel_token'))
+        ('stel_ssid', config.fragment.cookies.get('stel_ssid')),
+        ('stel_dt', config.fragment.cookies.get('stel_dt')),
+        ('stel_ton_token', config.fragment.cookies.get('stel_ton_token')),
+        ('stel_token', config.fragment.cookies.get('stel_token'))
     ]
     
     for cookie_name, cookie_value in required_cookies:
