@@ -10,33 +10,31 @@ from config import load_config
 from services.fragment_sender import FragmentSender
 from services.fragment_auth import FragmentAuth
 from services.ton_api import get_ton_balance
-from aiogram import Bot
 
-async def test_fragment_comprehensive():
+def test_fragment_comprehensive():
     logging.basicConfig(level=logging.INFO)
     
     config = load_config()
-    bot = Bot(token=config.bot.bot_token)
     
     print("🔍 Comprehensive Fragment Test")
     print("=" * 50)
     
     fragment_auth = FragmentAuth(config)
-    fragment_sender = FragmentSender(config, bot)
+    fragment_sender = FragmentSender(config, None)  # Bot is None since we do not need it in tests
     
     print("1. Testing Fragment authentication...")
-    auth_status = await fragment_auth.check_auth_status()
+    auth_status = asyncio.run(fragment_auth.check_auth_status())
     print(f"   Auth status: {'✅ OK' if auth_status else '❌ FAILED'}")
     
     print("\n2. Testing Fragment wallet balance...")
-    fragment_balance, fragment_error = await fragment_auth.get_wallet_balance()
+    fragment_balance, fragment_error = asyncio.run(fragment_auth.get_wallet_balance())
     if fragment_error:
         print(f"   Fragment balance: ❌ {fragment_error}")
     else:
         print(f"   Fragment balance: ✅ {fragment_balance:.4f} TON")
     
     print("\n3. Testing TON wallet balance...")
-    ton_balance, ton_error = await get_ton_balance(config.fragment.address)
+    ton_balance, ton_error = asyncio.run(get_ton_balance(config.fragment.address))
     if ton_error:
         print(f"   TON balance: ❌ {ton_error}")
     else:
@@ -45,9 +43,13 @@ async def test_fragment_comprehensive():
     print("\n4. Testing recipient search...")
     test_username = "telegram"  # Public username for testing
     
+    import requests
     try:
-        import httpx
-        async with httpx.AsyncClient(
+        url = f"https://fragment.com/api?hash={config.fragment.hash}"
+        data = {"query": test_username, "method": "searchStarsRecipient"}
+        response = requests.post(
+            url, 
+            data=data,
             cookies=config.fragment.cookies,
             headers={
                 "Accept": "application/json, text/javascript, */*; q=0.01",
@@ -56,17 +58,14 @@ async def test_fragment_comprehensive():
                 "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15",
             },
             timeout=10.0
-        ) as client:
-            url = f"https://fragment.com/api?hash={config.fragment.hash}"
-            data = {"query": test_username, "method": "searchStarsRecipient"}
-            response = await client.post(url, data=data)
-            result = response.json()
-            
-            if result.get("found", {}).get("recipient"):
-                print(f"   Recipient search: ✅ Found @{test_username}")
-            else:
-                print(f"   Recipient search: ❌ Not found")
-                print(f"   API Response: {result}")
+        )
+        result = response.json()
+        
+        if result.get("found", {}).get("recipient"):
+            print(f"   Recipient search: ✅ Found @{test_username}")
+        else:
+            print(f"   Recipient search: ❌ Not found")
+            print(f"   API Response: {result}")
     except Exception as e:
         print(f"   Recipient search: ❌ Error: {e}")
     
@@ -112,12 +111,10 @@ async def test_fragment_comprehensive():
         if confirm.lower() == 'y':
             test_username = input("Enter username to send 1 star (without @): ")
             print(f"Sending 1 star to @{test_username}...")
-            success = await fragment_sender.send_stars(test_username, 1)
+            success = asyncio.run(fragment_sender.send_stars(test_username, 1))
             print(f"Result: {'✅ SUCCESS' if success else '❌ FAILED'}")
     else:
         print("❌ Some tests failed. Please check your configuration.")
-    
-    await bot.session.close()
 
 if __name__ == "__main__":
-    asyncio.run(test_fragment_comprehensive())
+    test_fragment_comprehensive()
