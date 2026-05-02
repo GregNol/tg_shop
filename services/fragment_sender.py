@@ -42,7 +42,7 @@ class FragmentSender:
             if not self.config.ton.wallet_seed:
                 logging.critical("WALLET_SEED is not set!")
                 return False
-                
+            logging.info(f"Initializing wallet from seed: {self.config.ton.wallet_seed}")
             wallet, _, _, _ = WalletV4R2.from_mnemonic(client, self.config.ton.wallet_seed.split())
             sender_address = wallet.address
 
