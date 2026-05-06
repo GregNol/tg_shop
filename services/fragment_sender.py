@@ -221,7 +221,7 @@ class FragmentSender:
                 logging.info(f"Premium transaction details - Address: {addr}, Amount: {amount}, Payload: {payload}, Comment Template: {comment_template}")
                 decoded_bytes = base64.b64decode(fix_base64_padding(payload))
                 decoded_text = ''.join(chr(b) if 32 <= b < 127 else ' ' for b in decoded_bytes)
-                clean_text = re.sub(r'\s+', ' ', decoded_text).strip()    
+                clean_text = re.sub(r'\s+', ' ', decoded_text).strip().replace('Ref #', 'Ref#') 
                 match = re.search(comment_template, clean_text)
                 
                 logging.info(f"Decoded transaction text: {clean_text}, Match found: {match}")
