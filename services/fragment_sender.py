@@ -225,6 +225,8 @@ class FragmentSender:
                 match = re.search(comment_template, clean_text)
                 
                 logging.info(f"Decoded transaction text: {clean_text}, Match found: {match}")
+                print(clean_text)
+                print(match.group(0) if match else "No match found")
                 # return await self._send_ton_transaction(addr, amount, payload, comment_template)
         except Exception as e:
             logging.error(f"Premium purchase failed for @{username}: {e}", exc_info=True)
