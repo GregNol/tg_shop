@@ -220,7 +220,7 @@ class FragmentSender:
                 comment_template = r"Telegram.*Ref\s*#\S+"
                 logging.info(f"Premium transaction details - Address: {addr}, Amount: {amount}, Payload: {payload}, Comment Template: {comment_template}")
                 decoded_bytes = base64.b64decode(fix_base64_padding(payload))
-                decoded_text = ''.join(chr(b) if 32 <= b < 127 else ' ' for b in decoded_bytes)
+                decoded_text = ''.join(chr(b) for b in decoded_bytes)
                 clean_text = re.sub(r'\s+', ' ', decoded_text).strip()    
                 match = re.search(comment_template, clean_text)
                 
