@@ -124,12 +124,12 @@ class FragmentSender:
                 response_step2.raise_for_status()
                 json_step2 = response_step2.json()
                 
-                if not json_step2.get("ok", True): 
-                    logging.error(f"Step 2 failed: {json_step2}")
+                if json_step2.get("error") or not json_step2.get("ok", True): 
+                    logging.error(f"Step 2 (stars) failed: {json_step2}")
                     return False
                 req_id = json_step2.get("req_id")
                 if not req_id: 
-                    logging.error(f"Step 2 missing req_id: {json_step2}")
+                    logging.error(f"Step 2 (stars) missing req_id: {json_step2}")
                     return False
                 
                 headers_step3 = self.base_headers.copy()
@@ -190,12 +190,12 @@ class FragmentSender:
                 response_step2.raise_for_status()
                 json_step2 = response_step2.json()
                 
-                if not json_step2.get("ok", True): 
-                    logging.error(f"Step 2 failed: {json_step2}")
+                if json_step2.get("error") or not json_step2.get("ok", True): 
+                    logging.error(f"Step 2 (premium) failed: {json_step2}")
                     return False
                 req_id = json_step2.get("req_id")
                 if not req_id: 
-                    logging.error(f"Step 2 missing req_id: {json_step2}")
+                    logging.error(f"Step 2 (premium) missing req_id: {json_step2}")
                     return False
                 
                 headers_step3 = self.base_headers.copy()
