@@ -167,9 +167,6 @@ class FragmentSender:
 
     async def send_premium(self, username: str, months: int) -> bool:
         logging.info(f"Starting premium purchase: {months} months for @{username}")
-        logging.error(f"Premium purchase failed for @{username}: {e}", exc_info=True)
-        await self._notify_admins(f"❌ Ошибка покупки премиума для @{username}: {str(e)}")
-        return False
         try:
             async with httpx.AsyncClient(cookies=self.config.fragment.cookies, headers=self.base_headers, timeout=30.0) as client:
                 headers_step1 = self.base_headers.copy()
@@ -221,7 +218,8 @@ class FragmentSender:
                 tx = json_step3["transaction"]["messages"][0]
                 addr, amount, payload = tx["address"], tx["amount"], tx["payload"]
                 comment_template = r"Telegram.*Ref\s*#\S+"
-                return await self._send_ton_transaction(addr, amount, payload, comment_template)
+                logging.info(f"Premium transaction details - Address: {addr}, Amount: {amount}, Payload: {payload}, Comment Template: {comment_template}")
+                # return await self._send_ton_transaction(addr, amount, payload, comment_template)
         except Exception as e:
             logging.error(f"Premium purchase failed for @{username}: {e}", exc_info=True)
             await self._notify_admins(f"❌ Ошибка покупки премиума для @{username}: {str(e)}")
