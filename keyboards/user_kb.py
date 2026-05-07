@@ -71,12 +71,30 @@ def get_main_menu_only_keyboard() -> InlineKeyboardMarkup:
 def get_vpn_menu_kb(has_subscriptions: bool, price: float = 100) -> InlineKeyboardMarkup:
     buttons = []
     if has_subscriptions:
+        buttons.append([InlineKeyboardButton(text="📱 Подключить устройство", callback_data="vpn_connect_device")])
         buttons.append([InlineKeyboardButton(text=f"🔄 Продлить (1 мес) - {price}₽", callback_data="buy_vpn_plan_standard_1")])
     else:
         buttons.append([InlineKeyboardButton(text=f"🛒 Купить VPN (1 мес) - {price}₽", callback_data="buy_vpn_plan_standard_1")])
 
     buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_vpn_devices_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🍏 iOS (iPhone, iPad)", callback_data="vpn_device_ios"), 
+         InlineKeyboardButton(text="🤖 Android", callback_data="vpn_device_android")],
+        [InlineKeyboardButton(text="💻 Windows", callback_data="vpn_device_windows"), 
+         InlineKeyboardButton(text="🖥 macOS", callback_data="vpn_device_mac")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="vpn_menu")]
+    ])
+
+def get_vpn_connect_instruction_kb(sub_url: str, download_url: str) -> InlineKeyboardMarkup:
+    happ_deeplink = f"happ://add/{sub_url}"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📥 Скачать приложение", url=download_url)],
+        [InlineKeyboardButton(text="⚡ Подключить", url=happ_deeplink)],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="vpn_connect_device")]
+    ])
 
 def get_crypto_selection_keyboard(available_assets: list = None) -> InlineKeyboardMarkup:
     allowed_assets = ["BNB", "BTC", "ETH", "LTC", "SOL", "TON", "TRX", "USDT"]
