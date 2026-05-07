@@ -266,7 +266,7 @@ async def admin_give_vpn_process(message: types.Message, state: FSMContext, repo
                 total_gb=0,
                 expires_at=new_expiry
             )
-            sub_url = f"{xui.base_url}/sub/{client_id}"
+            sub_url = f"{xui.host_url}/sub/{client_id}"
             await message.answer(f"✅ ВПН успешно выдан пользователю {target_user_id} на {days} дней.\nДо: {new_expiry.strftime('%Y-%m-%d %H:%M')}\nСсылка: <code>{sub_url}</code>")
         else:
             await message.answer("❌ Ошибка при выдаче в XUI.")
