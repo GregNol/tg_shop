@@ -46,7 +46,8 @@ async def buy_vpn_plan_callback(call: types.CallbackQuery, repo: Repository, con
         port=config.xui.port,
         username=config.xui.username,
         password=config.xui.password,
-        https=config.xui.https
+        https=config.xui.https,
+        web_base_path=config.xui.web_base_path
     )
     
     await xui.login()

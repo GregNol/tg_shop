@@ -81,6 +81,7 @@ class XUIConfig:
     password: str
     https: bool
     inbound_id: int
+    web_base_path: str
 
 @dataclass
 class Config:
@@ -175,6 +176,7 @@ def load_config() -> Config:
             password=os.getenv("XUI_PASSWORD", "admin"),
             https=os.getenv("XUI_HTTPS", "true").lower() == "true",
             inbound_id=int(os.getenv("XUI_INBOUND_ID", "1")),
+            web_base_path=os.getenv("XUI_WEB_BASE_PATH", ""),
         ),
         database_url=os.getenv("DATABASE_URL", "postgresql://bot_user:bot_password@db:5432/tg_shop")
     )

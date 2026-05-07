@@ -4,9 +4,14 @@ import json
 from typing import Optional, Dict, Any, List
 
 class XUIServer:
-    def __init__(self, host: str, port: int, username: str, password: str, https: bool = True):
+    def __init__(self, host: str, port: int, username: str, password: str, https: bool = True, web_base_path: str = ""):
         protocol = "https" if https else "http"
-        self.base_url = f"{protocol}://{host}:{port}"
+        base = f"{protocol}://{host}:{port}"
+        # добавляем web_base_path если он есть, убедившись, что слеши стоят правильно
+        if web_base_path:
+            web_base_path = web_base_path.strip("/")
+            base = f"{base}/{web_base_path}"
+        self.base_url = base
         self.username = username
         self.password = password
         self.session = httpx.AsyncClient(verify=False)

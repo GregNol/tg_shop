@@ -208,7 +208,8 @@ async def admin_give_vpn_process(message: types.Message, state: FSMContext, repo
         port=config.xui.port,
         username=config.xui.username,
         password=config.xui.password,
-        https=config.xui.https
+        https=config.xui.https,
+        web_base_path=config.xui.web_base_path
     )
     
     await xui.login()
