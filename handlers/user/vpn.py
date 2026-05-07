@@ -176,23 +176,12 @@ async def vpn_device_selected_cb(call: types.CallbackQuery, repo: Repository, co
     )
     sub_url = f"{xui.host_url}/sub/{sub['client_uuid']}"
     
-    download_urls = {
-        "ios": "https://apps.apple.com/app/v2ray-tun/id1659622164", # Пример, обычно Hiddify/V2Ray/Happ(если есть)
-        "android": "https://play.google.com/store/apps/details?id=com.hiddify.hiddify", # Пример
-        "windows": "https://github.com/hiddify/hiddify-next/releases/latest",
-        "mac": "https://github.com/hiddify/hiddify-next/releases/latest"
-    }
-    
-    # Happ is usually Android/iOS
-    # Если есть конкретные ссылки на Happ, укажем общие для примера, либо AppStore/GooglePlay поиска Happ
-    dl_url = "https://happ-app.com" # заглушка, можно вставить реальную
-    
-    # Но так как просили "Приложение Happ":
+    dl_url = "https://happ-app.com"
     app_name = "Happ"
     if device == "ios":
-        dl_url = "https://apps.apple.com/ru/app/happ-proxy/id6472097032" # Пример ссылки на Happ в AppStore
+        dl_url = "https://apps.apple.com/ru/app/happ-proxy/id6472097032"
     elif device == "android":
-        dl_url = "https://play.google.com/store/apps/details?id=com.happ.proxy" # Пример
+        dl_url = "https://play.google.com/store/apps/details?id=com.happ.proxy"
     
     text = (
         f"<b>Инструкция по подключению ({device.upper()})</b>\n\n"
@@ -203,6 +192,40 @@ async def vpn_device_selected_cb(call: types.CallbackQuery, repo: Repository, co
     await safe_edit_message(
         call, 
         text=text, 
-        reply_markup=user_kb.get_vpn_connect_instruction_kb(sub_url, dl_url)
+        reply_markup=user_kb.get_vpn_connect_instruction_kb(dl_url, device)
     )
+
+
+@router.callback_query(F.data.startswith("vpn_connect_now_"))
+async def vpn_connect_now_cb(call: types.CallbackQuery, repo: Repository, config: Config):
+    user_id = call.from_user.id
+    subs = await repo.get_user_vpn_subscriptions(user_id)
+
+    if not subs:
+        await call.answer("У вас нет активной подписки!", show_alert=True)
+        return
+
+    sub = subs[0]
+    xui = XUIServer(
+        host=config.xui.host,
+        port=config.xui.port,
+        username=config.xui.username,
+        password=config.xui.password,
+        https=config.xui.https,
+        web_base_path=config.xui.web_base_path
+    )
+    sub_url = f"{xui.host_url}/sub/{sub['client_uuid']}"
+    happ_deeplink = f"happ://add/{sub_url}"
+
+    text = (
+        "<b>Подключение через Happ</b>\n\n"
+        "Telegram не поддерживает protocol `happ://` внутри URL-кнопок, "
+        "поэтому даю ссылку в тексте.\n\n"
+        "Скопируйте и откройте эту ссылку:\n"
+        f"<code>{happ_deeplink}</code>"
+    )
+    await safe_edit_message(call, text=text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="⬅️ К выбору устройства", callback_data="vpn_connect_device")],
+        [types.InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")]
+    ]))
 

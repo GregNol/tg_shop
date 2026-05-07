@@ -88,11 +88,10 @@ def get_vpn_devices_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="vpn_menu")]
     ])
 
-def get_vpn_connect_instruction_kb(sub_url: str, download_url: str) -> InlineKeyboardMarkup:
-    happ_deeplink = f"happ://add/{sub_url}"
+def get_vpn_connect_instruction_kb(download_url: str, device: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📥 Скачать приложение", url=download_url)],
-        [InlineKeyboardButton(text="⚡ Подключить", url=happ_deeplink)],
+        [InlineKeyboardButton(text="⚡ Подключить", callback_data=f"vpn_connect_now_{device}")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="vpn_connect_device")]
     ])
 
