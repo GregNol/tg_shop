@@ -13,6 +13,7 @@ class AdminUserManagementStates(StatesGroup):
     giving_balance_confirm = State()
     taking_balance_amount = State()
     taking_balance_confirm = State()
+    giving_vpn_months = State()
 
 class PromoStates(StatesGroup):
     menu = State()
@@ -36,6 +37,7 @@ class PriceStates(StatesGroup):
     premium_show = State()
     premium_input = State()
     premium_confirm = State()
+    vpn_input = State()
 
 class BroadcastConstructorStates(StatesGroup):
     waiting_for_initial_post = State()

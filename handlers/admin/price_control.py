@@ -71,3 +71,24 @@ async def price_premium_input_msg(message: types.Message, state: FSMContext, rep
     await repo.update_setting(f'premium_price_{plan_index}', price)
     await message.answer(f"✅ Цена тарифа «{PREMIUM_PLANS[plan_index]['name']}» изменена на <b>{price}₽</b>.", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="В админ-панель", callback_data="admin_panel")]]))
     await state.clear()
+
+@router.callback_query(F.data == "price_vpn")
+async def price_vpn_show(call: types.CallbackQuery, state: FSMContext, repo: Repository):
+    vpn_price = float(await repo.get_setting('vpn_standard_price') or 100)
+    await call.message.edit_text(
+        text=f"<b>🔐 Текущая цена ВПН тарифа Стандартный:</b> <code>{vpn_price}</code> ₽\n\nВведите новую цену:",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_prices")]])
+    )
+    await state.set_state(PriceStates.vpn_input)
+
+@router.message(PriceStates.vpn_input)
+async def price_vpn_input_msg(message: types.Message, state: FSMContext, repo: Repository):
+    try:
+        price = float(message.text.replace(",", "."))
+        if price <= 0: raise ValueError
+    except ValueError:
+        await message.answer("Введите корректное положительное число.")
+        return
+    await repo.update_setting('vpn_standard_price', price)
+    await message.answer(f"✅ Цена ВПН тарифа Стандартный изменена на <b>{price}₽</b>.", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="В админ-панель", callback_data="admin_panel")]]))
+    await state.clear()

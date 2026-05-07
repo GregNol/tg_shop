@@ -178,6 +178,101 @@ async def admin_take_balance_confirm(call: types.CallbackQuery, state: FSMContex
     await call.answer("✅ Баланс успешно списан.")
     await show_user_info_menu(call.message, state, repo)
 
+@router.callback_query(AdminUserManagementStates.user_menu, F.data == 'admin_give_vpn')
+async def admin_give_vpn_start(call: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    target_user_id = data['target_user_id']
+    await state.set_state(AdminUserManagementStates.giving_vpn_months)
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="⬅️ Назад", callback_data=AdminUserNavCallback(action="back_to_menu", target_user_id=target_user_id).pack())]
+    ])
+    await call.message.edit_text("🔐 Введите количество дней для выдачи или продления (например, 30):", reply_markup=kb)
+
+@router.message(AdminUserManagementStates.giving_vpn_months)
+async def admin_give_vpn_process(message: types.Message, state: FSMContext, repo: Repository, config: Config):
+    try:
+        days = int(message.text.strip())
+        if days <= 0: raise ValueError
+    except ValueError:
+        await message.answer("❗ Введите корректное количество дней (целое положительное число).")
+        return
+        
+    data = await state.get_data()
+    target_user_id = data['target_user_id']
+    user = await repo.get_user(target_user_id)
+    
+    from services.xui import XUIServer
+    xui = XUIServer(
+        host=config.xui.host,
+        port=config.xui.port,
+        username=config.xui.username,
+        password=config.xui.password,
+        https=config.xui.https
+    )
+    
+    await xui.login()
+    subs = await repo.get_user_vpn_subscriptions(target_user_id)
+    active_sub = None
+    for sub in subs:
+        if sub['tariff_name'] == 'Стандартный':
+            active_sub = sub
+            break
+
+    duration_ms = days * 24 * 60 * 60 * 1000
+    
+    if active_sub:
+        current_expiry = active_sub['expires_at']
+        if current_expiry and current_expiry > datetime.now():
+            from datetime import timedelta
+            new_expiry = current_expiry + timedelta(days=days)
+        else:
+            from datetime import timedelta
+            new_expiry = datetime.now() + timedelta(days=days)
+            
+        new_expiry_ms = int(new_expiry.timestamp() * 1000)
+        success = await xui.update_client(
+            inbound_id=active_sub['inbound_id'],
+            client_uuid=active_sub['client_uuid'],
+            email=active_sub['email'],
+            enable=True,
+            expire_time=new_expiry_ms
+        )
+        if success:
+            await repo.extend_vpn_subscription(active_sub['client_uuid'], new_expires_at=new_expiry)
+            await message.answer(f"✅ ВПН успешно продлен пользователю {target_user_id} на {days} дней. Новая дата окончания: {new_expiry.strftime('%Y-%m-%d %H:%M')}")
+        else:
+            await message.answer("❌ Ошибка при продлении в XUI.")
+    else:
+        from datetime import timedelta
+        new_expiry = datetime.now() + timedelta(days=days)
+        new_expiry_ms = int(new_expiry.timestamp() * 1000)
+        client_email = f"{target_user_id}_{user['username'] or 'user'}"
+        inbound_id = config.xui.inbound_id
+        
+        client_id = await xui.add_client(
+            inbound_id=inbound_id,
+            email=client_email,
+            expire_time=new_expiry_ms
+        )
+        if client_id:
+            await repo.create_vpn_subscription(
+                user_id=target_user_id,
+                client_uuid=client_id,
+                email=client_email,
+                inbound_id=inbound_id,
+                target_tariff_name='Стандартный',
+                total_gb=0,
+                expires_at=new_expiry
+            )
+            await message.answer(f"✅ ВПН успешно выдан пользователю {target_user_id} на {days} дней.\nДо: {new_expiry.strftime('%Y-%m-%d %H:%M')}\nUUID: <code>{client_id}</code>")
+        else:
+            await message.answer("❌ Ошибка при выдаче в XUI.")
+            
+    await xui.close()
+    dummy_message = await message.answer("Возврат...")
+    await show_user_info_menu(dummy_message, state, repo)
+    await dummy_message.delete()
+
 @router.callback_query(UserPaymentsCallback.filter())
 async def view_user_payments(call: types.CallbackQuery, callback_data: UserPaymentsCallback, state: FSMContext, repo: Repository):
     data = await state.get_data()

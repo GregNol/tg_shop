@@ -1,6 +1,6 @@
 from aiogram import Router
 from middlewares.filters import CheckSubscriptionFilter
-from . import start, profile, calculator, purchase_stars, purchase_premium
+from . import start, profile, calculator, purchase_stars, purchase_premium, vpn
 
 def get_user_router() -> Router:
     router = Router()
@@ -13,4 +13,5 @@ def get_user_router() -> Router:
     router.include_router(calculator.router)
     router.include_router(purchase_stars.router)
     router.include_router(purchase_premium.router)
+    router.include_router(vpn.router)
     return router

@@ -39,6 +39,12 @@ def get_back_to_admin_keyboard() -> InlineKeyboardMarkup:
 def get_user_info_kb(is_blocked: bool) -> InlineKeyboardMarkup:
     block_btn_text = "🚫 Заблокировать" if not is_blocked else "✅ Разблокировать"
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💰 Выдать баланс", callback_data="admin_give_balance"), InlineKeyboardButton(text="💳 Списать баланс", callback_data="admin_take_balance")],
+        [InlineKeyboardButton(text="🔐 Выдать ВПН", callback_data="admin_give_vpn")],
+        [InlineKeyboardButton(text=block_btn_text, callback_data="admin_toggle_block"), InlineKeyboardButton(text="💸 Платежи", callback_data=UserPaymentsCallback(page=1).pack())],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_users")]
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💰 Выдать баланс", callback_data="admin_give_balance"), InlineKeyboardButton(text="💸 Отнять баланс", callback_data="admin_take_balance")],
         [InlineKeyboardButton(text="🧾 Чеки", callback_data=UserPaymentsCallback(page=1).pack()), InlineKeyboardButton(text=block_btn_text, callback_data="admin_toggle_block")],
         [InlineKeyboardButton(text="⬅️ Назад в админку", callback_data="admin_panel")]
@@ -100,6 +106,7 @@ def get_prices_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⭐ Цены на звезды", callback_data="price_stars")],
         [InlineKeyboardButton(text="💎 Цены на премиум", callback_data="price_premium")],
+        [InlineKeyboardButton(text="🔐 Цена на ВПН", callback_data="price_vpn")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]
     ])
 

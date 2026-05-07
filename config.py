@@ -74,6 +74,15 @@ class RollyPayConfig:
     api_key: str
 
 @dataclass
+class XUIConfig:
+    host: str
+    port: int
+    username: str
+    password: str
+    https: bool
+    inbound_id: int
+
+@dataclass
 class Config:
     bot: BotConfig
     visuals: VisualsConfig
@@ -87,6 +96,7 @@ class Config:
     rollypay: RollyPayConfig
     ton: TonConfig
     fragment: FragmentConfig
+    xui: XUIConfig
     database_url: str
 
 def load_config() -> Config:
@@ -157,6 +167,14 @@ def load_config() -> Config:
             public_key=os.getenv("FRAGMENT_PUBLICKEY"),
             wallets=os.getenv("FRAGMENT_WALLETS"),
             address=os.getenv("FRAGMENT_ADDRES")
+        ),
+        xui=XUIConfig(
+            host=os.getenv("XUI_HOST", "127.0.0.1"),
+            port=int(os.getenv("XUI_PORT", "2053")),
+            username=os.getenv("XUI_USERNAME", "admin"),
+            password=os.getenv("XUI_PASSWORD", "admin"),
+            https=os.getenv("XUI_HTTPS", "true").lower() == "true",
+            inbound_id=int(os.getenv("XUI_INBOUND_ID", "1")),
         ),
         database_url=os.getenv("DATABASE_URL", "postgresql://bot_user:bot_password@db:5432/tg_shop")
     )

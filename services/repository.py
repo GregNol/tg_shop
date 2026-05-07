@@ -238,3 +238,58 @@ class Repository:
                 stats['paid_payments'] += payments
                 stats['paid_revenue'] += revenue
         return stats
+
+    # --- VPN Subscriptions Methods ---
+    async def create_vpn_subscription(self, user_id: int, client_uuid: str, email: str, inbound_id: int, target_tariff_name: str, total_gb: int, expires_at: Optional[datetime] = None) -> asyncpg.Record:
+        """Создать запись о новой VPN подписке пользователя."""
+        return await self.db.fetchrow(
+            """
+            INSERT INTO vpn_subscriptions (user_id, client_uuid, email, inbound_id, tariff_name, total_gb, expires_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING *
+            """,
+            user_id, client_uuid, email, inbound_id, target_tariff_name, total_gb, expires_at
+        )
+
+    async def get_vpn_subscription(self, client_uuid: str) -> Optional[asyncpg.Record]:
+        """Получить информацию о конкретной подписке по UUID."""
+        return await self.db.fetchrow("SELECT * FROM vpn_subscriptions WHERE client_uuid = $1", client_uuid)
+
+    async def get_user_vpn_subscriptions(self, user_id: int) -> List[asyncpg.Record]:
+        """Получить все подписки конкретного пользователя."""
+        return await self.db.fetch("SELECT * FROM vpn_subscriptions WHERE user_id = $1 ORDER BY created_at DESC", user_id)
+
+    async def update_vpn_subscription_status(self, client_uuid: str, is_active: bool):
+        """Обновить статус активности подписки."""
+        status = 1 if is_active else 0
+        await self.db.execute("UPDATE vpn_subscriptions SET is_active = $1 WHERE client_uuid = $2", status, client_uuid)
+
+    async def extend_vpn_subscription(self, client_uuid: str, new_expires_at: Optional[datetime] = None, added_gb: int = 0):
+        """Продлить подписку (изменить дату окончания и/или добавить трафик)."""
+        await self.db.execute(
+            """
+            UPDATE vpn_subscriptions 
+            SET expires_at = COALESCE($1, expires_at), 
+                total_gb = total_gb + $2,
+                is_active = 1
+            WHERE client_uuid = $3
+            """,
+            new_expires_at, added_gb, client_uuid
+        )
+
+    async def change_vpn_subscription_tariff(self, client_uuid: str, new_tariff_name: str, new_total_gb: Optional[int] = None, new_expires_at: Optional[datetime] = None):
+        """Сменить тариф подписки (изменить название, а также опционально обновить трафик и дату)."""
+        await self.db.execute(
+            """
+            UPDATE vpn_subscriptions 
+            SET tariff_name = $1,
+                total_gb = COALESCE($2, total_gb),
+                expires_at = COALESCE($3, expires_at)
+            WHERE client_uuid = $4
+            """,
+            new_tariff_name, new_total_gb, new_expires_at, client_uuid
+        )
+
+    async def delete_vpn_subscription(self, client_uuid: str):
+        """Удалить запись о подписке."""
+        await self.db.execute("DELETE FROM vpn_subscriptions WHERE client_uuid = $1", client_uuid)

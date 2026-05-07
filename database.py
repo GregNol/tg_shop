@@ -81,6 +81,22 @@ async def init_db(database_url: str, support_contact: str = ''):
         """)
         
         await conn.execute("""
+            CREATE TABLE IF NOT EXISTS vpn_subscriptions (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                client_uuid TEXT UNIQUE NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                inbound_id INTEGER NOT NULL,
+                tariff_name TEXT,
+                total_gb INTEGER DEFAULT 0,
+                expires_at TIMESTAMP,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(telegram_id)
+            )
+        """)
+        
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -94,6 +110,7 @@ async def init_db(database_url: str, support_contact: str = ''):
             'premium_price_2': '2499',
             'maintenance_mode': '0',
             'start_text': '<b>🖐 Добро пожаловать</b>\n\n🚀 У нас моментальная доставка 24/7\n📱 Без KYC и верификаций\n💰 Оплата любым способом',
+            'vpn_standard_price': '100',
             'purchase_success_text': 'Спасибо за покупку ✅\nЗвёзды придут в течении 5 минут ⭐️',
             'news_channel_id': '',
             'news_channel_link': '',
