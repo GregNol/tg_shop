@@ -142,7 +142,8 @@ async def buy_vpn_plan_callback(call: types.CallbackQuery, repo: Repository, con
                 expires_at=new_expiry
             )
             sub_url = f"{xui.host_url}/sub/{client_id}"
-            await safe_edit_message(call, text=f"✅ Подписка ВПН успешно оформлена до {new_expiry.strftime('%Y-%m-%d %H:%M')}\nВаша ссылка для подключения:\n<code>{sub_url}</code>", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")]]))
+            kb = get_vpn_menu_kb(True, vpn_price)
+            await safe_edit_message(call, text=f"✅ Подписка ВПН успешно оформлена до {new_expiry.strftime('%Y-%m-%d %H:%M')}\nВаша ссылка для подключения:\n<code>{sub_url}</code>", reply_markup=kb)
         else:
             await repo.update_user_balance(call.from_user.id, vpn_price, operation='add')
             await safe_edit_message(call, text="❌ Ошибка при создании в XUI. Средства возвращены.")

@@ -17,7 +17,7 @@ class SubscribeCallback(CallbackData, prefix="sub"):
 def get_main_menu_kb(config, user_id: int, support_contact: str, news_channel_link: str) -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text="⭐ Купить звёзды", callback_data="buy_stars"), InlineKeyboardButton(text="💎 Купить премиум", callback_data="buy_premium")],
-        [InlineKeyboardButton(text="� ВПН", callback_data="vpn_menu"), InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
+        [InlineKeyboardButton(text="🛜 ВПН", callback_data="vpn_menu"), InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
         [InlineKeyboardButton(text="🧮 Калькулятор", callback_data="calculator")]
     ]
     bottom_row = []
