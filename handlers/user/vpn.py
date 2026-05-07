@@ -176,12 +176,14 @@ async def vpn_device_selected_cb(call: types.CallbackQuery, repo: Repository, co
     )
     sub_url = f"{xui.host_url}/sub/{sub['client_uuid']}"
     
-    dl_url = "https://happ-app.com"
+    download_urls = {
+        "ios": "https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973",
+        "macos": "https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973",
+        "android": "https://play.google.com/store/apps/details?id=com.happproxy",
+        "windows": "https://github.com/Happ-proxy/happ-desktop/releases/latest/download/setup-Happ.x64.exe"
+    }
+    dl_url = download_urls.get(device, "https://happ-app.com")
     app_name = "Happ"
-    if device == "ios":
-        dl_url = "https://apps.apple.com/ru/app/happ-proxy/id6472097032"
-    elif device == "android":
-        dl_url = "https://play.google.com/store/apps/details?id=com.happ.proxy"
     
     text = (
         f"<b>Инструкция по подключению ({device.upper()})</b>\n\n"
@@ -192,7 +194,7 @@ async def vpn_device_selected_cb(call: types.CallbackQuery, repo: Repository, co
     await safe_edit_message(
         call, 
         text=text, 
-        reply_markup=user_kb.get_vpn_connect_instruction_kb(dl_url, device)
+        reply_markup=user_kb.get_vpn_connect_instruction_kb(dl_url)
     )
 
 
@@ -219,10 +221,8 @@ async def vpn_connect_now_cb(call: types.CallbackQuery, repo: Repository, config
 
     text = (
         "<b>Подключение через Happ</b>\n\n"
-        "Telegram не поддерживает protocol `happ://` внутри URL-кнопок, "
-        "поэтому даю ссылку в тексте.\n\n"
-        "Скопируйте и откройте эту ссылку:\n"
-        f"<code>{happ_deeplink}</code>"
+        "Откройте эту ссылку и VPN автоматически добавится:\n"
+        f"{happ_deeplink}"
     )
     await safe_edit_message(call, text=text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(text="⬅️ К выбору устройства", callback_data="vpn_connect_device")],
