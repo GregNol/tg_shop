@@ -6,8 +6,8 @@ from typing import Optional, Dict, Any, List
 class XUIServer:
     def __init__(self, host: str, port: int, username: str, password: str, https: bool = True, web_base_path: str = ""):
         protocol = "https" if https else "http"
-        self.host_url = f"{protocol}://{host}:{port}"
-        base = self.host_url
+        self.host_url = f"{protocol}://{host}:2096"
+        base = f"{protocol}://{host}:{port}"
         # добавляем web_base_path если он есть, убедившись, что слеши стоят правильно
         if web_base_path:
             web_base_path = web_base_path.strip("/")

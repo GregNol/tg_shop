@@ -221,8 +221,11 @@ async def vpn_connect_now_cb(call: types.CallbackQuery, repo: Repository, config
 
     text = (
         "<b>Подключение через Happ</b>\n\n"
-        "Откройте эту ссылку и VPN автоматически добавится:\n"
-        f"{happ_deeplink}"
+        "1. Скопируйте ссылку ниже:\n"
+        f"<code>{happ_deeplink}</code>\n\n"
+        "2. Откройте приложение Happ\n\n"
+        "3. Сверху справа нажмите на иконку «+» и выберите «Вставить из буфера обмена»\n\n"
+        "4. Профиль добавится автоматически, нажмите на него для подключения!"
     )
     await safe_edit_message(call, text=text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(text="⬅️ К выбору устройства", callback_data="vpn_connect_device")],
