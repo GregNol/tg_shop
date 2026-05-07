@@ -188,7 +188,7 @@ async def vpn_device_selected_cb(call: types.CallbackQuery, repo: Repository, co
     text = (
         f"<b>Инструкция по подключению ({device.upper()})</b>\n\n"
         f"1️⃣ Скачайте приложение <b>{app_name}</b> по кнопке ниже.\n"
-        f"2️⃣ После установки нажмите кнопку <b>«⚡ Подключить»</b> — профиль добавится автоматически!"
+        f"2️⃣ После установки нажмите кнопку <b>«⚡ Подключить»</b>"
     )
     
     await safe_edit_message(
@@ -217,12 +217,11 @@ async def vpn_connect_now_cb(call: types.CallbackQuery, repo: Repository, config
         web_base_path=config.xui.web_base_path
     )
     sub_url = f"{xui.host_url}/sub/{sub['client_uuid']}"
-    happ_deeplink = f"happ://add/{sub_url}"
 
     text = (
         "<b>Подключение через Happ</b>\n\n"
         "1. Скопируйте ссылку ниже:\n"
-        f"<code>{happ_deeplink}</code>\n\n"
+        f"<code>{sub_url}</code>\n\n"
         "2. Откройте приложение Happ\n\n"
         "3. Сверху справа нажмите на иконку «+» и выберите «Вставить из буфера обмена»\n\n"
         "4. Профиль добавится автоматически, нажмите на него для подключения!"
