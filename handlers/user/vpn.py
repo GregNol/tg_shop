@@ -16,17 +16,40 @@ async def vpn_menu_callback(call: types.CallbackQuery, repo: Repository, config:
     user_id = call.from_user.id
     subs = await repo.get_user_vpn_subscriptions(user_id)
     has_subs = len(subs) > 0
-    await safe_delete_and_send_photo(
-        call, config, config.visuals.img_url_main,  # Or add a specific VPN image later
-        "<b>🔐 ВПН Сервис</b>\n\nВыберите действие:",
-        user_kb.get_vpn_menu_kb(has_subs)
-    )
-
-@router.callback_query(F.data == "buy_vpn")
-async def buy_vpn_callback(call: types.CallbackQuery, repo: Repository):
     vpn_price = float(await repo.get_setting('vpn_standard_price') or 100)
-    kb = user_kb.get_vpn_plans_kb(vpn_price)
-    await safe_edit_message(call, text="<b>Выберите тариф:</b>", reply_markup=kb)
+
+    if has_subs:
+        xui = XUIServer(
+            host=config.xui.host,
+            port=config.xui.port,
+            username=config.xui.username,
+            password=config.xui.password,
+            https=config.xui.https,
+            web_base_path=config.xui.web_base_path
+        )
+        
+        text = "<b>🔐 Твоя подписка ВПН:</b>\n\n"
+        for idx, sub in enumerate(subs, 1):
+            status = "✅ Активна" if sub['is_active'] else "❌ Выключена"
+            expiry = sub['expires_at'].strftime('%Y-%m-%d %H:%M') if sub['expires_at'] else "Бессрочно"
+            sub_url = f"{xui.host_url}/sub/{sub['client_uuid']}"
+            text += f"Тариф: <b>«{sub['tariff_name']}»</b>\n"
+            text += f"Статус: {status}\n"
+            text += f"Истекает: {expiry}\n"
+            text += f"Ссылка: <code>{sub_url}</code>\n\n"
+            break # Пока предполагаем 1 активную подписку
+            
+        await safe_delete_and_send_photo(
+            call, config, config.visuals.img_url_main,
+            text,
+            user_kb.get_vpn_menu_kb(has_subs, vpn_price)
+        )
+    else:
+        await safe_delete_and_send_photo(
+            call, config, config.visuals.img_url_main,
+            "<b>🔐 ВПН Сервис</b>\n\nУ вас еще нет подписки. Купите её для безопасного доступа к сети:",
+            user_kb.get_vpn_menu_kb(has_subs, vpn_price)
+        )
 
 @router.callback_query(F.data == "buy_vpn_plan_standard_1")
 async def buy_vpn_plan_callback(call: types.CallbackQuery, repo: Repository, config: Config):
@@ -125,32 +148,4 @@ async def buy_vpn_plan_callback(call: types.CallbackQuery, repo: Repository, con
             await safe_edit_message(call, text="❌ Ошибка при создании в XUI. Средства возвращены.")
             
     await xui.close()
-
-@router.callback_query(F.data == "my_vpn_subscriptions")
-async def my_vpn_subscriptions_callback(call: types.CallbackQuery, repo: Repository, config: Config):
-    subs = await repo.get_user_vpn_subscriptions(call.from_user.id)
-    if not subs:
-        await call.answer("У вас нет активных подписок.", show_alert=True)
-        return
-        
-    xui = XUIServer(
-        host=config.xui.host,
-        port=config.xui.port,
-        username=config.xui.username,
-        password=config.xui.password,
-        https=config.xui.https,
-        web_base_path=config.xui.web_base_path
-    )
-        
-    text = "<b>Мои подписки ВПН:</b>\n\n"
-    for idx, sub in enumerate(subs, 1):
-        status = "✅ Активна" if sub['is_active'] else "❌ Выключена"
-        expiry = sub['expires_at'].strftime('%Y-%m-%d %H:%M') if sub['expires_at'] else "Бессрочно"
-        sub_url = f"{xui.host_url}/sub/{sub['client_uuid']}"
-        text += f"{idx}. <b>Тариф «{sub['tariff_name']}»</b>\n"
-        text += f"Статус: {status}\n"
-        text += f"Истекает: {expiry}\n"
-        text += f"Ссылка: <code>{sub_url}</code>\n\n"
-        
-    await safe_edit_message(call, text=text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="⬅️ Назад", callback_data="vpn_menu")]]))
 

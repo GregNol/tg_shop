@@ -68,20 +68,15 @@ def get_cancel_keyboard() -> InlineKeyboardMarkup:
 def get_main_menu_only_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 В главное меню", callback_data="main_menu")]])
 
-def get_vpn_menu_kb(has_subscriptions: bool) -> InlineKeyboardMarkup:
-    buttons = [
-        [InlineKeyboardButton(text="🛒 Купить VPN", callback_data="buy_vpn")],
-    ]
+def get_vpn_menu_kb(has_subscriptions: bool, price: float = 100) -> InlineKeyboardMarkup:
+    buttons = []
     if has_subscriptions:
-        buttons.append([InlineKeyboardButton(text="⚙️ Мои подписки", callback_data="my_vpn_subscriptions")])
+        buttons.append([InlineKeyboardButton(text=f"🔄 Продлить (1 мес) - {price}₽", callback_data="buy_vpn_plan_standard_1")])
+    else:
+        buttons.append([InlineKeyboardButton(text=f"🛒 Купить VPN (1 мес) - {price}₽", callback_data="buy_vpn_plan_standard_1")])
+
     buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-def get_vpn_plans_kb(price: float) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"Стандартный (1 месяц) - {price}₽", callback_data="buy_vpn_plan_standard_1")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="vpn_menu")]
-    ])
 
 def get_crypto_selection_keyboard(available_assets: list = None) -> InlineKeyboardMarkup:
     allowed_assets = ["BNB", "BTC", "ETH", "LTC", "SOL", "TON", "TRX", "USDT"]
