@@ -69,7 +69,7 @@ class XUIServer:
                     "expiryTime": expire_time,
                     "enable": enable,
                     "tgId": "",
-                    "subId": str(uuid.uuid4())
+                    "subId": client_id
                 }
             ]
         }
@@ -129,7 +129,7 @@ class XUIServer:
                     "expiryTime": expire_time,
                     "enable": enable,
                     "tgId": "",
-                    "subId": str(uuid.uuid4())
+                    "subId": client_uuid
                 }
             ]
         }

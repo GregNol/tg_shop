@@ -118,7 +118,8 @@ async def buy_vpn_plan_callback(call: types.CallbackQuery, repo: Repository, con
                 total_gb=0,
                 expires_at=new_expiry
             )
-            await safe_edit_message(call, text=f"✅ Подписка ВПН успешно оформлена до {new_expiry.strftime('%Y-%m-%d %H:%M')}\nВаш UUID для подключения: <code>{client_id}</code>", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")]]))
+            sub_url = f"{xui.base_url}/sub/{client_id}"
+            await safe_edit_message(call, text=f"✅ Подписка ВПН успешно оформлена до {new_expiry.strftime('%Y-%m-%d %H:%M')}\nВаша ссылка для подключения:\n<code>{sub_url}</code>", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")]]))
         else:
             await repo.update_user_balance(call.from_user.id, vpn_price, operation='add')
             await safe_edit_message(call, text="❌ Ошибка при создании в XUI. Средства возвращены.")
@@ -126,20 +127,30 @@ async def buy_vpn_plan_callback(call: types.CallbackQuery, repo: Repository, con
     await xui.close()
 
 @router.callback_query(F.data == "my_vpn_subscriptions")
-async def my_vpn_subscriptions_callback(call: types.CallbackQuery, repo: Repository):
+async def my_vpn_subscriptions_callback(call: types.CallbackQuery, repo: Repository, config: Config):
     subs = await repo.get_user_vpn_subscriptions(call.from_user.id)
     if not subs:
         await call.answer("У вас нет активных подписок.", show_alert=True)
         return
         
+    xui = XUIServer(
+        host=config.xui.host,
+        port=config.xui.port,
+        username=config.xui.username,
+        password=config.xui.password,
+        https=config.xui.https,
+        web_base_path=config.xui.web_base_path
+    )
+        
     text = "<b>Мои подписки ВПН:</b>\n\n"
     for idx, sub in enumerate(subs, 1):
         status = "✅ Активна" if sub['is_active'] else "❌ Выключена"
         expiry = sub['expires_at'].strftime('%Y-%m-%d %H:%M') if sub['expires_at'] else "Бессрочно"
+        sub_url = f"{xui.base_url}/sub/{sub['client_uuid']}"
         text += f"{idx}. <b>Тариф «{sub['tariff_name']}»</b>\n"
         text += f"Статус: {status}\n"
         text += f"Истекает: {expiry}\n"
-        text += f"UUID: <code>{sub['client_uuid']}</code>\n\n"
+        text += f"Ссылка: <code>{sub_url}</code>\n\n"
         
     await safe_edit_message(call, text=text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="⬅️ Назад", callback_data="vpn_menu")]]))
 
