@@ -91,6 +91,7 @@ def get_vpn_devices_kb() -> InlineKeyboardMarkup:
 def get_vpn_connect_instruction_kb(download_url: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📥 Скачать приложение", url=download_url)],
+        [InlineKeyboardButton(text="⚡ Подключить", callback_data=f"vpn_connect_now")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="vpn_connect_device")]
     ])
 

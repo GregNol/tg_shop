@@ -198,7 +198,7 @@ async def vpn_device_selected_cb(call: types.CallbackQuery, repo: Repository, co
     )
 
 
-@router.callback_query(F.data.startswith("vpn_connect_now_"))
+@router.callback_query(F.data == "vpn_connect_now")
 async def vpn_connect_now_cb(call: types.CallbackQuery, repo: Repository, config: Config):
     user_id = call.from_user.id
     subs = await repo.get_user_vpn_subscriptions(user_id)
