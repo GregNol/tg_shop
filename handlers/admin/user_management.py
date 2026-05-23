@@ -256,7 +256,7 @@ async def admin_give_vpn_process(message: types.Message, state: FSMContext, repo
             client_email = f"{target_user_id}_{user['username'] or 'user'}"
             inbound_id = config.xui.inbound_id
 
-            client_id = await xui.add_client(
+            client_id = await xui.add_or_update_client(
                 inbound_id=inbound_id,
                 email=client_email,
                 expire_time=new_expiry_ms

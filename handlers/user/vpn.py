@@ -135,7 +135,7 @@ async def buy_vpn_plan_callback(call: types.CallbackQuery, repo: Repository, con
         new_expiry_ms = int(new_expiry.timestamp() * 1000)
         inbound_id = config.xui.inbound_id
         
-        client_id = await xui.add_client(
+        client_id = await xui.add_or_update_client(
             inbound_id=inbound_id,
             email=client_email,
             expire_time=new_expiry_ms
@@ -233,7 +233,7 @@ async def buy_vpn_premium_callback(call: types.CallbackQuery, repo: Repository, 
 
     # create primary client
     inbound_id_p1 = config.xui.inbound_id
-    client_id_p1 = await xui_primary.add_client(
+    client_id_p1 = await xui_primary.add_or_update_client(
         inbound_id=inbound_id_p1,
         email=client_email_p1,
         expire_time=new_expiry_ms
@@ -241,7 +241,7 @@ async def buy_vpn_premium_callback(call: types.CallbackQuery, repo: Repository, 
 
     # create secondary client with 100GB limit
     inbound_id_p2 = config.xui2.inbound_id
-    client_id_p2 = await xui_secondary.add_client(
+    client_id_p2 = await xui_secondary.add_or_update_client(
         inbound_id=inbound_id_p2,
         email=client_email_p2,
         expire_time=new_expiry_ms,
@@ -422,7 +422,7 @@ async def confirm_upgrade_vpn(call: types.CallbackQuery, repo: Repository, confi
     inbound_id_p2 = config.xui2.inbound_id
     new_expiry_ms = int(expires_at.timestamp() * 1000)
 
-    client_id_p2 = await xui_secondary.add_client(
+    client_id_p2 = await xui_secondary.add_or_update_client(
         inbound_id=inbound_id_p2,
         email=client_email_p2,
         expire_time=new_expiry_ms,

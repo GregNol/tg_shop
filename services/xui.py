@@ -123,6 +123,110 @@ class XUIServer:
             )
         return None
 
+    async def get_client_uuid_by_email(self, inbound_id: int, email: str) -> Optional[str]:
+        """Find existing client UUID by email inside a specific inbound."""
+        try:
+            inbounds = await self.get_inbounds()
+            if not inbounds:
+                logger.warning("XUI get_client_uuid_by_email: inbounds list is empty for inbound_id=%s email=%s", inbound_id, email)
+                return None
+
+            target = None
+            for inbound in inbounds:
+                if int(inbound.get("id", 0)) == int(inbound_id):
+                    target = inbound
+                    break
+
+            if not target:
+                logger.warning("XUI get_client_uuid_by_email: inbound not found inbound_id=%s email=%s", inbound_id, email)
+                return None
+
+            settings_raw = target.get("settings")
+            settings = settings_raw if isinstance(settings_raw, dict) else json.loads(settings_raw or "{}")
+            clients = settings.get("clients") or []
+
+            for client in clients:
+                if client.get("email") == email:
+                    existing_id = client.get("id")
+                    if existing_id:
+                        logger.info(
+                            "XUI found existing client by email: inbound_id=%s email=%s client_id=%s",
+                            inbound_id,
+                            email,
+                            existing_id,
+                        )
+                        return existing_id
+
+            return None
+        except Exception:
+            logger.exception("XUI get_client_uuid_by_email exception: inbound_id=%s email=%s", inbound_id, email)
+            return None
+
+    async def add_or_update_client(
+        self,
+        inbound_id: int,
+        email: str,
+        enable: bool = True,
+        vless: bool = True,
+        limit_ip: int = 0,
+        total_gb: int = 0,
+        expire_time: int = 0,
+        flow: str = "xtls-rprx-vision"
+    ) -> Optional[str]:
+        """Create client or update existing one (if email already exists).
+
+        Returns the resulting client UUID or None.
+        """
+        created_id = await self.add_client(
+            inbound_id=inbound_id,
+            email=email,
+            enable=enable,
+            vless=vless,
+            limit_ip=limit_ip,
+            total_gb=total_gb,
+            expire_time=expire_time,
+            flow=flow,
+        )
+        if created_id:
+            return created_id
+
+        existing_id = await self.get_client_uuid_by_email(inbound_id=inbound_id, email=email)
+        if not existing_id:
+            logger.error(
+                "XUI add_or_update_client failed: unable to create and existing client not found inbound_id=%s email=%s",
+                inbound_id,
+                email,
+            )
+            return None
+
+        updated = await self.update_client(
+            inbound_id=inbound_id,
+            client_uuid=existing_id,
+            email=email,
+            enable=enable,
+            vless=vless,
+            limit_ip=limit_ip,
+            total_gb=total_gb,
+            expire_time=expire_time,
+            flow=flow,
+        )
+        if not updated:
+            logger.error(
+                "XUI add_or_update_client failed on update: inbound_id=%s email=%s client_id=%s",
+                inbound_id,
+                email,
+                existing_id,
+            )
+            return None
+
+        logger.info(
+            "XUI add_or_update_client updated existing client: inbound_id=%s email=%s client_id=%s",
+            inbound_id,
+            email,
+            existing_id,
+        )
+        return existing_id
+
     async def delete_client(self, inbound_id: int, email: str) -> bool:
         """Удалить клиента по email."""
         url = f"{self.base_url}/panel/api/inbounds/{inbound_id}/delClient/{email}"
