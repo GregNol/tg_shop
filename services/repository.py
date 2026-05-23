@@ -266,48 +266,82 @@ class Repository:
     # --- VPN Subscriptions Methods ---
     async def create_vpn_subscription(self, user_id: int, client_uuid: str, email: str, inbound_id: int, target_tariff_name: str, total_gb: int, expires_at: Optional[datetime] = None) -> asyncpg.Record:
         """Создать запись о новой VPN подписке пользователя."""
-        async with self.db.transaction():
-            # create subscription
-            if await self._vpn_subscriptions_uses_legacy_columns():
-                # Backward-compatible insert for legacy schemas.
-                sub = await self.db.fetchrow(
+        try:
+            async with self.db.transaction():
+                # create subscription with robust fallback for mixed/legacy deployments
+                sub = None
+                use_legacy_insert = await self._vpn_subscriptions_uses_legacy_columns()
+
+                if not use_legacy_insert:
+                    try:
+                        sub = await self.db.fetchrow(
+                            """
+                            INSERT INTO vpn_subscriptions (user_id, tariff_name, total_gb, expires_at)
+                            VALUES ($1, $2, $3, $4)
+                            RETURNING *
+                            """,
+                            user_id, target_tariff_name, total_gb, expires_at
+                        )
+                    except asyncpg.NotNullViolationError as e:
+                        # Some live DBs still require legacy columns even if detection misses them.
+                        if 'client_uuid' in str(e) or 'email' in str(e) or 'inbound_id' in str(e):
+                            logging.warning(
+                                "create_vpn_subscription switched to legacy insert due to not-null violation: "
+                                "user_id=%s inbound_id=%s client_uuid=%s tariff=%s error=%s",
+                                user_id,
+                                inbound_id,
+                                client_uuid,
+                                target_tariff_name,
+                                e,
+                            )
+                            use_legacy_insert = True
+                            self._vpn_subscriptions_has_legacy_client_columns = True
+                        else:
+                            raise
+
+                if sub is None and use_legacy_insert:
+                    sub = await self.db.fetchrow(
+                        """
+                        INSERT INTO vpn_subscriptions (user_id, client_uuid, email, inbound_id, tariff_name, total_gb, expires_at)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        RETURNING *
+                        """,
+                        user_id, client_uuid, email, inbound_id, target_tariff_name, total_gb, expires_at
+                    )
+
+                # create client entry linked to subscription
+                client = await self.db.fetchrow(
                     """
-                    INSERT INTO vpn_subscriptions (user_id, client_uuid, email, inbound_id, tariff_name, total_gb, expires_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    INSERT INTO vpn_subscription_clients (subscription_id, client_uuid, email, inbound_id, panel, total_gb)
+                    VALUES ($1, $2, $3, $4, $5, $6)
                     RETURNING *
                     """,
-                    user_id, client_uuid, email, inbound_id, target_tariff_name, total_gb, expires_at
+                    sub['id'], client_uuid, email, inbound_id, 'primary', total_gb
                 )
-            else:
-                sub = await self.db.fetchrow(
-                    """
-                    INSERT INTO vpn_subscriptions (user_id, tariff_name, total_gb, expires_at)
-                    VALUES ($1, $2, $3, $4)
-                    RETURNING *
-                    """,
-                    user_id, target_tariff_name, total_gb, expires_at
-                )
-            # create client entry linked to subscription
-            client = await self.db.fetchrow(
-                """
-                INSERT INTO vpn_subscription_clients (subscription_id, client_uuid, email, inbound_id, panel, total_gb)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                RETURNING *
-                """,
-                sub['id'], client_uuid, email, inbound_id, 'primary', total_gb
+                logging.info(f"Created vpn subscription {sub['id']} and primary client {client_uuid} for user {user_id}")
+                # return a combined dict similar to legacy vpn_subscriptions row
+                return {
+                    'subscription_id': sub['id'],
+                    'client_uuid': client['client_uuid'],
+                    'email': client['email'],
+                    'inbound_id': client['inbound_id'],
+                    'tariff_name': sub['tariff_name'],
+                    'total_gb': client['total_gb'],
+                    'expires_at': sub['expires_at'],
+                    'is_active': client['is_active']
+                }
+        except Exception:
+            logging.exception(
+                "Failed to create VPN subscription: user_id=%s client_uuid=%s email=%s inbound_id=%s tariff=%s total_gb=%s expires_at=%s",
+                user_id,
+                client_uuid,
+                email,
+                inbound_id,
+                target_tariff_name,
+                total_gb,
+                expires_at,
             )
-            logging.info(f"Created vpn subscription {sub['id']} and primary client {client_uuid} for user {user_id}")
-            # return a combined dict similar to legacy vpn_subscriptions row
-            return {
-                'subscription_id': sub['id'],
-                'client_uuid': client['client_uuid'],
-                'email': client['email'],
-                'inbound_id': client['inbound_id'],
-                'tariff_name': sub['tariff_name'],
-                'total_gb': client['total_gb'],
-                'expires_at': sub['expires_at'],
-                'is_active': client['is_active']
-            }
+            raise
 
     async def get_vpn_subscription(self, client_uuid: str) -> Optional[asyncpg.Record]:
         """Получить информацию о конкретной подписке по UUID (client-level)."""

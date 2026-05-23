@@ -1,7 +1,10 @@
 import httpx
 import uuid
 import json
+import logging
 from typing import Optional, Dict, Any, List
+
+logger = logging.getLogger(__name__)
 
 class XUIServer:
     def __init__(self, host: str, port: int, username: str, password: str, https: bool = True, web_base_path: str = ""):
@@ -27,10 +30,19 @@ class XUIServer:
         data = {"username": self.username, "password": self.password}
         try:
             response = await self.session.post(url, data=data)
-            if response.status_code == 200 and response.json().get("success"):
+            payload = response.json()
+            if response.status_code == 200 and payload.get("success"):
+                logger.info("XUI login succeeded: url=%s status=%s", url, response.status_code)
                 return True
+            logger.error(
+                "XUI login failed: url=%s status=%s success=%s response=%s",
+                url,
+                response.status_code,
+                payload.get("success"),
+                response.text[:500],
+            )
         except Exception as e:
-            print(f"XUI Login Error: {e}")
+            logger.exception("XUI login exception: url=%s error=%s", url, e)
         return False
 
     async def get_inbounds(self) -> Optional[List[Dict[str, Any]]]:
@@ -79,10 +91,36 @@ class XUIServer:
             "id": inbound_id,
             "settings": json.dumps(settings)
         }
-        
-        response = await self.session.post(url, json=data)
-        if response.status_code == 200 and response.json().get("success", False):
-            return client_id
+
+        try:
+            response = await self.session.post(url, json=data)
+            payload = response.json()
+            if response.status_code == 200 and payload.get("success", False):
+                logger.info(
+                    "XUI add_client succeeded: inbound_id=%s email=%s client_id=%s status=%s",
+                    inbound_id,
+                    email,
+                    client_id,
+                    response.status_code,
+                )
+                return client_id
+
+            logger.error(
+                "XUI add_client failed: inbound_id=%s email=%s client_id=%s status=%s success=%s response=%s",
+                inbound_id,
+                email,
+                client_id,
+                response.status_code,
+                payload.get("success"),
+                response.text[:500],
+            )
+        except Exception:
+            logger.exception(
+                "XUI add_client exception: inbound_id=%s email=%s client_id=%s",
+                inbound_id,
+                email,
+                client_id,
+            )
         return None
 
     async def delete_client(self, inbound_id: int, email: str) -> bool:
@@ -139,10 +177,36 @@ class XUIServer:
             "id": inbound_id,
             "settings": json.dumps(settings)
         }
-        
-        response = await self.session.post(url, json=data)
-        if response.status_code == 200:
-            return response.json().get("success", False)
+        try:
+            response = await self.session.post(url, json=data)
+            if response.status_code == 200:
+                payload = response.json()
+                success = payload.get("success", False)
+                if not success:
+                    logger.error(
+                        "XUI update_client rejected: inbound_id=%s client_uuid=%s email=%s response=%s",
+                        inbound_id,
+                        client_uuid,
+                        email,
+                        response.text[:500],
+                    )
+                return success
+
+            logger.error(
+                "XUI update_client HTTP error: inbound_id=%s client_uuid=%s email=%s status=%s response=%s",
+                inbound_id,
+                client_uuid,
+                email,
+                response.status_code,
+                response.text[:500],
+            )
+        except Exception:
+            logger.exception(
+                "XUI update_client exception: inbound_id=%s client_uuid=%s email=%s",
+                inbound_id,
+                client_uuid,
+                email,
+            )
         return False
 
 
