@@ -82,7 +82,12 @@ class StarPricingService:
         static_cost = float(static_cost_raw) if static_cost_raw else 0.01
 
         mode = (await repo.get_setting("star_cost_ton_mode") or "static").strip().lower()
+        logging.info("Star cost TON lookup: mode=%s, static_cost=%.8f", mode, static_cost)
         if mode != "dynamic" or config is None:
+            if mode != "dynamic":
+                logging.info("Star cost TON lookup: using static cost because dynamic mode is disabled")
+            else:
+                logging.info("Star cost TON lookup: using static cost because config is missing")
             return static_cost
 
         quote_qty_raw = await repo.get_setting("star_cost_ton_quote_qty")
@@ -94,12 +99,15 @@ class StarPricingService:
 
         now = time.time()
         if self._cached_star_cost_ton is not None and (now - self._star_cost_cached_at) < cache_ttl:
+            logging.info("Star cost TON lookup: using cached value=%.8f", self._cached_star_cost_ton)
             return self._cached_star_cost_ton
 
         quote_username = (await repo.get_setting("star_cost_ton_quote_username") or "").strip().lstrip("@")
         if not quote_username:
+            logging.info("Star cost TON lookup: quote username is empty, falling back to static cost")
             return static_cost
 
+        logging.info("Star cost TON lookup: fetching from Fragment username=%s qty=%d", quote_username, quote_qty)
         quoted_cost = await self._fetch_fragment_star_cost_ton(config, quote_username, quote_qty)
         if quoted_cost and quoted_cost > 0:
             logging.info("Fetched dynamic star cost from Fragment: username=%s, qty=%d, cost_per_star_ton=%.8f", quote_username, quote_qty, quoted_cost)
@@ -107,10 +115,12 @@ class StarPricingService:
             self._star_cost_cached_at = now
             return quoted_cost
 
+        logging.info("Star cost TON lookup: Fragment returned no usable value, falling back to static cost")
         return static_cost
 
     async def _fetch_fragment_star_cost_ton(self, config: Config, username: str, quantity: int) -> Optional[float]:
         url = f"https://fragment.com/api?hash={config.fragment.hash}"
+        logging.info("Fragment star quote request started: username=%s quantity=%d", username, quantity)
         headers = {
             "Accept": "application/json, text/javascript, */*; q=0.01",
             "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -130,9 +140,13 @@ class StarPricingService:
                 )
                 step1.raise_for_status()
                 data1 = step1.json()
+                logging.info("Fragment star quote step1 response: %s", data1)
                 recipient = data1.get("found", {}).get("recipient")
                 if not recipient:
+                    logging.info("Fragment star quote step1: recipient not found for username=%s", username)
                     return None
+
+                logging.info("Fragment star quote step1: recipient=%s", recipient)
                 step2 = await client.post(
                     url,
                     data={"recipient": recipient, "quantity": quantity, "method": "initBuyStarsRequest"},
@@ -140,9 +154,13 @@ class StarPricingService:
                 )
                 step2.raise_for_status()
                 data2 = step2.json()
+                logging.info("Fragment star quote step2 response: %s", data2)
                 req_id = data2.get("req_id")
                 if not req_id:
+                    logging.info("Fragment star quote step2: req_id not found for recipient=%s quantity=%d", recipient, quantity)
                     return None
+
+                logging.info("Fragment star quote step2: req_id=%s", req_id)
 
                 step3 = await client.post(
                     url,
@@ -165,12 +183,15 @@ class StarPricingService:
                 )
                 step3.raise_for_status()
                 data3 = step3.json()
+                logging.info("Fragment star quote step3 response: %s", data3)
                 tx = data3.get("transaction", {}).get("messages", [{}])[0]
                 amount_nano = int(tx.get("amount", 0))
                 if amount_nano <= 0:
+                    logging.info("Fragment star quote step3: invalid transaction amount for req_id=%s", req_id)
                     return None
 
                 total_ton = amount_nano / 1_000_000_000
+                logging.info("Fragment star quote success: total_ton=%.8f amount_nano=%d quantity=%d", total_ton, amount_nano, quantity)
                 return total_ton / quantity
         except Exception as exc:
             logging.warning(f"Failed to fetch dynamic star TON cost: {exc}")
