@@ -108,6 +108,62 @@ async def price_stars_show(call: types.CallbackQuery, state: FSMContext, repo: R
     )
     await state.set_state(PriceStates.stars_input)
 
+
+@router.callback_query(F.data == "price_stars_min")
+async def price_stars_min_show(call: types.CallbackQuery, state: FSMContext, repo: Repository):
+    min_price = float(await repo.get_setting('star_min_price') or 0)
+    await call.message.edit_text(
+        text=f"<b>📉 Минимальная цена звезды:</b> <code>{min_price:.2f}</code> ₽\n\nВведите новое значение (0 — отключить ограничение):",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_prices")]])
+    )
+    await state.set_state(PriceStates.stars_min_input)
+
+
+@router.message(PriceStates.stars_min_input)
+async def price_stars_min_input_msg(message: types.Message, state: FSMContext, repo: Repository):
+    try:
+        price = float(message.text.replace(",", "."))
+        if price < 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("Введите корректное число 0 или больше.")
+        return
+
+    await repo.update_setting('star_min_price', price)
+    await message.answer(
+        f"✅ Минимальная цена звезды изменена на <b>{price:.2f}₽</b>.",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="В админ-панель", callback_data="admin_panel")]])
+    )
+    await state.clear()
+
+
+@router.callback_query(F.data == "price_stars_max")
+async def price_stars_max_show(call: types.CallbackQuery, state: FSMContext, repo: Repository):
+    max_price = float(await repo.get_setting('star_max_price') or 0)
+    await call.message.edit_text(
+        text=f"<b>📈 Максимальная цена звезды:</b> <code>{max_price:.2f}</code> ₽\n\nВведите новое значение (0 — отключить ограничение):",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_prices")]])
+    )
+    await state.set_state(PriceStates.stars_max_input)
+
+
+@router.message(PriceStates.stars_max_input)
+async def price_stars_max_input_msg(message: types.Message, state: FSMContext, repo: Repository):
+    try:
+        price = float(message.text.replace(",", "."))
+        if price < 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("Введите корректное число 0 или больше.")
+        return
+
+    await repo.update_setting('star_max_price', price)
+    await message.answer(
+        f"✅ Максимальная цена звезды изменена на <b>{price:.2f}₽</b>.",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="В админ-панель", callback_data="admin_panel")]])
+    )
+    await state.clear()
+
 @router.message(PriceStates.stars_input)
 async def price_stars_input_msg(message: types.Message, state: FSMContext, repo: Repository):
     try:
