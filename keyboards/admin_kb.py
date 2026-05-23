@@ -116,6 +116,7 @@ def get_prices_menu_kb(dynamic_button_text: str = "🔄 Динамическая
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=dynamic_button_text, callback_data=dynamic_button_callback)],
         [InlineKeyboardButton(text="⭐ Цены на звезды", callback_data="price_stars")],
+        [InlineKeyboardButton(text="👤 Юзернейм Fragment", callback_data="price_stars_quote_username")],
         [InlineKeyboardButton(text="📉 Мин. цена звезды", callback_data="price_stars_min"), InlineKeyboardButton(text="📈 Макс. цена звезды", callback_data="price_stars_max")],
         [InlineKeyboardButton(text="💎 Цены на премиум", callback_data="price_premium")],
         [InlineKeyboardButton(text="🔐 Цена на ВПН", callback_data="price_vpn")],

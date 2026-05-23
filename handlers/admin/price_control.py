@@ -112,6 +112,32 @@ async def price_stars_show(call: types.CallbackQuery, state: FSMContext, repo: R
     await state.set_state(PriceStates.stars_input)
 
 
+@router.callback_query(F.data == "price_stars_quote_username")
+async def price_stars_quote_username_show(call: types.CallbackQuery, state: FSMContext, repo: Repository):
+    quote_username = (await repo.get_setting('star_cost_ton_quote_username') or '').strip().lstrip('@')
+    display_username = f"@{quote_username}" if quote_username else "не задан"
+    await call.message.edit_text(
+        text=(
+            f"<b>👤 Юзернейм для Fragment quote:</b> <code>{display_username}</code>\n\n"
+            "Введите новый username без @ или оставьте пустым, чтобы отключить динамический quote:"
+        ),
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_prices")]])
+    )
+    await state.set_state(PriceStates.stars_quote_username_input)
+
+
+@router.message(PriceStates.stars_quote_username_input)
+async def price_stars_quote_username_input_msg(message: types.Message, state: FSMContext, repo: Repository):
+    quote_username = message.text.strip().lstrip('@')
+    await repo.update_setting('star_cost_ton_quote_username', quote_username)
+    display_username = f"@{quote_username}" if quote_username else "не задан"
+    await message.answer(
+        f"✅ Юзернейм Fragment обновлён: <b>{display_username}</b>",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="В админ-панель", callback_data="admin_panel")]])
+    )
+    await state.clear()
+
+
 @router.callback_query(F.data == "price_stars_min")
 async def price_stars_min_show(call: types.CallbackQuery, state: FSMContext, repo: Repository):
     min_price = float(await repo.get_setting('star_min_price') or 0)

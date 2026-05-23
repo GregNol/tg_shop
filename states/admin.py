@@ -34,6 +34,7 @@ class PriceStates(StatesGroup):
     menu = State()
     stars_show = State()
     stars_input = State()
+    stars_quote_username_input = State()
     stars_min_input = State()
     stars_max_input = State()
     stars_confirm = State()
