@@ -1,7 +1,9 @@
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
 
+from config import Config
 from services.repository import Repository
+from services.star_pricing import star_pricing_service
 from states.admin import PriceStates
 from keyboards.admin_kb import get_prices_menu_kb, get_premium_prices_kb
 from keyboards.user_kb import PREMIUM_PLANS
@@ -14,11 +16,59 @@ async def get_premium_prices(repo: Repository):
     return [float(prices_db.get(f'premium_price_{i}', plan['price'])) for i, plan in enumerate(PREMIUM_PLANS)]
 
 @router.callback_query(F.data == "admin_prices")
-async def admin_prices_menu(call: types.CallbackQuery, repo: Repository):
+async def admin_prices_menu(call: types.CallbackQuery, repo: Repository, config: Config):
     star_price_mode = (await repo.get_setting('star_price_mode') or 'static').strip().lower()
     star_cost_ton_mode = (await repo.get_setting('star_cost_ton_mode') or 'static').strip().lower()
     dynamic_enabled = star_price_mode == 'dynamic' and star_cost_ton_mode == 'dynamic'
     mode_text = 'Вкл' if dynamic_enabled else 'Выкл'
+
+    settings = await repo.get_multiple_settings([
+        'star_price',
+        'star_cost_ton',
+        'star_target_profit_per_100',
+        'star_markup_percent',
+        'star_min_price',
+        'star_max_price',
+        'star_cost_ton_quote_username',
+        'star_cost_ton_quote_qty',
+        'star_cost_ton_cache_seconds',
+    ])
+
+    static_star_price = float(settings.get('star_price') or 1.8)
+    static_star_cost_ton = float(settings.get('star_cost_ton') or 0.01)
+    target_profit_per_100 = float(settings.get('star_target_profit_per_100') or 15)
+    markup_percent = float(settings.get('star_markup_percent') or 20)
+    min_price = float(settings.get('star_min_price') or 0)
+    max_price = float(settings.get('star_max_price') or 0)
+    quote_username = (settings.get('star_cost_ton_quote_username') or '').strip().lstrip('@') or 'не задан'
+    quote_qty = int(settings.get('star_cost_ton_quote_qty') or 50)
+    cache_seconds = int(settings.get('star_cost_ton_cache_seconds') or 120)
+
+    current_star_price = await star_pricing_service.get_star_price(repo, config)
+    current_star_cost_ton = await star_pricing_service.get_star_cost_ton(repo, config)
+    current_ton_rate = await star_pricing_service._get_ton_rub_rate_cached()
+    current_cost_rub = current_star_cost_ton * current_ton_rate
+    target_profit_per_star = target_profit_per_100 / 100
+
+    pricing_info = (
+        "\n\n<b>📐 Расчёт цены</b>\n"
+        f"• Режим цены: <code>{star_price_mode}</code>\n"
+        f"• Режим себестоимости TON: <code>{star_cost_ton_mode}</code>\n"
+        f"• Статическая цена: <code>{static_star_price:.2f} ₽</code>\n"
+        f"• Статическая себестоимость: <code>{static_star_cost_ton:.4f} TON</code> за звезду\n"
+        f"• Текущая себестоимость: <code>{current_star_cost_ton:.6f} TON</code> за звезду\n"
+        f"• Курс TON/RUB: <code>{current_ton_rate:.2f} ₽</code>\n"
+        f"• Себестоимость в рублях: <code>{current_cost_rub:.2f} ₽</code> за звезду\n"
+        f"• Целевая прибыль: <code>{target_profit_per_100:.2f} ₽</code> на 100 звёзд\n"
+        f"• Прибыль на 1 звезду: <code>{target_profit_per_star:.2f} ₽</code>\n"
+        f"• Наценка вместо target-profit: <code>{markup_percent:.2f}%</code>\n"
+        f"• Минимальная цена: <code>{min_price:.2f} ₽</code>\n"
+        f"• Максимальная цена: <code>{max_price:.2f} ₽</code>\n"
+        f"• Fragment username: <code>@{quote_username}</code>\n"
+        f"• Fragment qty: <code>{quote_qty}</code>\n"
+        f"• Cache TTL: <code>{cache_seconds}</code> сек\n"
+        f"• Итоговая цена сейчас: <code>{current_star_price:.2f} ₽</code> за 1 звезду"
+    )
 
     kb = get_prices_menu_kb(
         dynamic_button_text=f"🔄 Динамическая цена: {mode_text}",
@@ -30,6 +80,7 @@ async def admin_prices_menu(call: types.CallbackQuery, repo: Repository):
             f"⭐ Динамический режим: <b>{'включен' if dynamic_enabled else 'выключен'}</b>\n"
             f"• Цена за звезду: <code>{star_price_mode}</code>\n"
             f"• Себестоимость TON: <code>{star_cost_ton_mode}</code>"
+            f"{pricing_info}"
         ),
         reply_markup=kb
     )
