@@ -6,6 +6,7 @@ import logging
 from services.repository import Repository
 from states.admin import AdminUserManagementStates
 from keyboards.admin_kb import get_user_info_kb, get_user_payments_kb, UserPaymentsCallback, AdminUserNavCallback
+from keyboards.admin_kb import AdminVPNCallback
 from config import Config
 
 router = Router()
@@ -202,15 +203,8 @@ async def admin_give_vpn_process(message: types.Message, state: FSMContext, repo
     target_user_id = data['target_user_id']
     user = await repo.get_user(target_user_id)
     
-    from services.xui import XUIServer
-    xui = XUIServer(
-        host=config.xui.host,
-        port=config.xui.port,
-        username=config.xui.username,
-        password=config.xui.password,
-        https=config.xui.https,
-        web_base_path=config.xui.web_base_path
-    )
+    from services.xui import xui_from_config
+    xui = xui_from_config(config)
     
     await xui.login()
     subs = await repo.get_user_vpn_subscriptions(target_user_id)
@@ -224,12 +218,12 @@ async def admin_give_vpn_process(message: types.Message, state: FSMContext, repo
     
     if active_sub:
         current_expiry = active_sub['expires_at']
-        if current_expiry and current_expiry > datetime.now():
+        if current_expiry and current_expiry > datetime.utcnow():
             from datetime import timedelta
             new_expiry = current_expiry + timedelta(days=days)
         else:
             from datetime import timedelta
-            new_expiry = datetime.now() + timedelta(days=days)
+            new_expiry = datetime.utcnow() + timedelta(days=days)
             
         new_expiry_ms = int(new_expiry.timestamp() * 1000)
         success = await xui.update_client(
@@ -246,7 +240,7 @@ async def admin_give_vpn_process(message: types.Message, state: FSMContext, repo
             await message.answer("❌ Ошибка при продлении в XUI.")
     else:
         from datetime import timedelta
-        new_expiry = datetime.now() + timedelta(days=days)
+        new_expiry = datetime.utcnow() + timedelta(days=days)
         new_expiry_ms = int(new_expiry.timestamp() * 1000)
         client_email = f"{target_user_id}_{user['username'] or 'user'}"
         inbound_id = config.xui.inbound_id
@@ -275,6 +269,82 @@ async def admin_give_vpn_process(message: types.Message, state: FSMContext, repo
     dummy_message = await message.answer("Возврат...")
     await show_user_info_menu(dummy_message, state, repo)
     await dummy_message.delete()
+
+
+@router.callback_query(F.data == 'admin_vpn_clients')
+async def admin_show_vpn_clients(call: types.CallbackQuery, state: FSMContext, repo: Repository, config: Config):
+    data = await state.get_data()
+    target_user_id = data.get('target_user_id')
+    if not target_user_id:
+        await call.answer('Пользователь не выбран', show_alert=True)
+        return
+
+    clients = await repo.get_user_vpn_subscriptions(target_user_id)
+    if not clients:
+        await call.answer('У пользователя нет VPN-клиентов', show_alert=True)
+        return
+
+    # Build message with clients grouped by subscription
+    text_lines = [f"🔐 VPN клиенты пользователя <code>{target_user_id}</code>:\n"]
+    kb_rows = []
+    for c in clients:
+        created = c['created_at'].strftime('%Y-%m-%d %H:%M') if c.get('created_at') else '-'
+        text_lines.append(f"• {c['panel'].capitalize()} | UUID: <code>{c['client_uuid']}</code> | email: <code>{c['email']}</code> | inbound: {c['inbound_id']} | GB: {c['total_gb']} | exp: {c['expires_at'] or '-'}")
+        # action buttons per client
+        kb_rows.append([
+            types.InlineKeyboardButton(text="Продлить", callback_data=AdminVPNCallback(action="extend", client_uuid=c['client_uuid']).pack()),
+            types.InlineKeyboardButton(text="Добавить GB", callback_data=AdminVPNCallback(action="add_gb", client_uuid=c['client_uuid']).pack())
+        ])
+        kb_rows.append([
+            types.InlineKeyboardButton(text="Отозвать", callback_data=AdminVPNCallback(action="revoke", client_uuid=c['client_uuid']).pack()),
+            types.InlineKeyboardButton(text="Открыть профиль", url=(f"{'https' if (config.xui.https if c['panel']=='primary' else config.xui2.https) else 'http'}://{(config.xui.host if c['panel']=='primary' else config.xui2.host)}:2096/sub/{c['client_uuid']}"))
+        ])
+
+    kb_rows.append([types.InlineKeyboardButton(text="⬅️ Назад", callback_data=AdminUserNavCallback(action="back_to_menu", target_user_id=target_user_id).pack())])
+    kb = types.InlineKeyboardMarkup(inline_keyboard=kb_rows)
+
+    await call.message.edit_text('\n'.join(text_lines), reply_markup=kb)
+
+
+@router.callback_query(AdminVPNCallback.filter())
+async def admin_vpn_action(call: types.CallbackQuery, callback_data: AdminVPNCallback, state: FSMContext, repo: Repository, config: Config):
+    action = callback_data.action
+    client_uuid = callback_data.client_uuid
+
+    if action == 'revoke':
+        # delete client from panels and DB
+        client = await repo.get_vpn_subscription(client_uuid)
+        if not client:
+            await call.answer('Клиент не найден', show_alert=True)
+            return
+        logging.info(f"Admin {call.from_user.id} revoke requested for client {client_uuid} (user {client.get('user_id')})")
+        inbound = client['inbound_id']
+        email = client['email']
+        # pick panel to determine xui
+        panel = client['panel']
+        xui = xui_from_config(config, secondary=(panel != 'primary'))
+        await xui.login()
+        success = await xui.delete_client(inbound, email)
+        await xui.close()
+        await repo.delete_vpn_subscription(client_uuid)
+        logging.info(f"Admin {call.from_user.id} revoked client {client_uuid}, panel={panel}, success={success}")
+        await call.answer('Клиент отозван', show_alert=False)
+        await admin_show_vpn_clients(call, state, repo, config)
+        return
+
+    if action == 'add_gb':
+        logging.info(f"Admin {call.from_user.id} initiated add_gb for client {client_uuid}")
+        await state.set_state(AdminUserManagementStates.adding_vpn_gb)
+        await state.update_data(target_client_uuid=client_uuid)
+        await call.message.edit_text('Введите количество ГБ для добавления (целое число):', reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="⬅️ Отмена", callback_data=AdminUserNavCallback(action="back_to_menu", target_user_id=(await state.get_data()).get('target_user_id') ).pack())]]))
+        return
+
+    if action == 'extend':
+        logging.info(f"Admin {call.from_user.id} initiated extend for client {client_uuid}")
+        await state.set_state(AdminUserManagementStates.extending_vpn_months)
+        await state.update_data(target_subscription_client=client_uuid)
+        await call.message.edit_text('Введите количество дней для продления (например, 30):', reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="⬅️ Отмена", callback_data=AdminUserNavCallback(action="back_to_menu", target_user_id=(await state.get_data()).get('target_user_id') ).pack())]]))
+        return
 
 @router.callback_query(UserPaymentsCallback.filter())
 async def view_user_payments(call: types.CallbackQuery, callback_data: UserPaymentsCallback, state: FSMContext, repo: Repository):
@@ -313,3 +383,107 @@ async def view_user_payments(call: types.CallbackQuery, callback_data: UserPayme
         kb = get_user_payments_kb(page, max_page, user_id)
         
     await call.message.edit_text(text, reply_markup=kb)
+
+
+@router.message(AdminUserManagementStates.adding_vpn_gb)
+async def admin_process_add_vpn_gb(message: types.Message, state: FSMContext, repo: Repository, config: Config):
+    try:
+        amount = int(message.text.strip())
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer('❗ Введите корректное целое положительное количество ГБ.')
+        return
+
+    data = await state.get_data()
+    client_uuid = data.get('target_client_uuid')
+    if not client_uuid:
+        await message.answer('Клиент не найден в состоянии.')
+        await state.clear()
+        return
+
+    client = await repo.get_vpn_subscription(client_uuid)
+    if not client:
+        await message.answer('Клиент не найден в БД.')
+        await state.clear()
+        return
+
+    new_total = (client.get('total_gb') or 0) + amount
+    logging.info(f"Admin {message.from_user.id} adding {amount}GB to client {client_uuid} (was {client.get('total_gb')})")
+    await repo.extend_vpn_subscription(client_uuid, added_gb=amount)
+
+    # Update client in panel
+    panel = client.get('panel')
+    xui = xui_from_config(config, secondary=(panel != 'primary'))
+    await xui.login()
+    expires = client.get('expires_at')
+    expire_ms = int(expires.timestamp() * 1000) if expires else 0
+    await xui.update_client(inbound_id=client['inbound_id'], client_uuid=client_uuid, email=client['email'], enable=True, expire_time=expire_ms, total_gb=new_total)
+    await xui.close()
+    logging.info(f"Admin {message.from_user.id} added {amount}GB to client {client_uuid}, new_total={new_total}")
+    await message.answer(f'✅ Добавлено {amount} ГБ. Новый лимит: {new_total} ГБ')
+    await state.clear()
+    await show_user_info_menu(message, state, repo)
+
+
+@router.message(AdminUserManagementStates.extending_vpn_months)
+async def admin_process_extend_vpn_months(message: types.Message, state: FSMContext, repo: Repository, config: Config):
+    try:
+        days = int(message.text.strip())
+        if days <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer('❗ Введите корректное целое количество дней.')
+        return
+
+    data = await state.get_data()
+    client_uuid = data.get('target_subscription_client')
+    if not client_uuid:
+        await message.answer('Клиент не найден в состоянии.')
+        await state.clear()
+        return
+
+    client = await repo.get_vpn_subscription(client_uuid)
+    if not client:
+        await message.answer('Клиент не найден в БД.')
+        await state.clear()
+        return
+
+    logging.info(f"Admin {message.from_user.id} extending client {client_uuid} by {days} days")
+    # compute new expiry
+    current_expiry = client.get('expires_at')
+    from datetime import timedelta
+    if current_expiry and current_expiry > datetime.utcnow():
+        new_expiry = current_expiry + timedelta(days=days)
+    else:
+        new_expiry = datetime.utcnow() + timedelta(days=days)
+    new_expiry_ms = int(new_expiry.timestamp() * 1000)
+
+    # fetch all clients for the subscription
+    sub_id = client.get('subscription_id')
+    clients = await repo.get_subscription_clients(sub_id)
+
+    # prepare xui instances
+    xui_primary = xui_from_config(config)
+    xui_secondary = None
+    if getattr(config, 'xui2', None):
+        xui_secondary = xui_from_config(config, secondary=True)
+
+    # update each client in panels and DB
+    for c in clients:
+        panel = c.get('panel')
+        if panel == 'primary':
+            xui = xui_primary
+        else:
+            xui = xui_secondary or xui_primary
+
+        logging.info(f"Updating client {c['client_uuid']} on panel={panel} to expiry {new_expiry}")
+        await xui.login()
+        await xui.update_client(inbound_id=c['inbound_id'], client_uuid=c['client_uuid'], email=c['email'], enable=True, expire_time=new_expiry_ms, total_gb=c.get('total_gb', 0))
+        await repo.extend_vpn_subscription(c['client_uuid'], new_expires_at=new_expiry)
+        await xui.close()
+
+    logging.info(f"Admin {message.from_user.id} extended subscription {sub_id} to {new_expiry}")
+    await message.answer(f'✅ Подписка продлена на {days} дней до {new_expiry.strftime("%Y-%m-%d %H:%M")}')
+    await state.clear()
+    await show_user_info_menu(message, state, repo)

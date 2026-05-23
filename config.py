@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass
-from typing import List, Dict
+from typing import List, Dict, Optional
 from dotenv import load_dotenv
 import logging
 
@@ -99,6 +99,7 @@ class Config:
     fragment: FragmentConfig
     xui: XUIConfig
     database_url: str
+    xui2: Optional[XUIConfig] = None
 
 def load_config() -> Config:
     admin_ids_str = os.getenv("ADMIN_IDS", "")
@@ -113,6 +114,21 @@ def load_config() -> Config:
         'stel_ton_token': os.getenv("STEL_TON_TOKEN"),
         'stel_token': os.getenv("STEL_TOKEN"),
     }
+
+    # build optional second XUI config if provided
+    xui2_host = os.getenv("XUI2_HOST", "").strip()
+    if xui2_host:
+        xui2_cfg = XUIConfig(
+            host=xui2_host,
+            port=int(os.getenv("XUI2_PORT", os.getenv("XUI_PORT", "2053"))),
+            username=os.getenv("XUI2_USERNAME", os.getenv("XUI_USERNAME", "admin")),
+            password=os.getenv("XUI2_PASSWORD", os.getenv("XUI_PASSWORD", "admin")),
+            https=os.getenv("XUI2_HTTPS", os.getenv("XUI_HTTPS", "true")).lower() == "true",
+            inbound_id=int(os.getenv("XUI2_INBOUND_ID", os.getenv("XUI_INBOUND_ID", "1"))),
+            web_base_path=os.getenv("XUI2_WEB_BASE_PATH", os.getenv("XUI_WEB_BASE_PATH", "")),
+        )
+    else:
+        xui2_cfg = None
 
     return Config(
         bot=BotConfig(
@@ -178,5 +194,6 @@ def load_config() -> Config:
             inbound_id=int(os.getenv("XUI_INBOUND_ID", "1")),
             web_base_path=os.getenv("XUI_WEB_BASE_PATH", ""),
         ),
-        database_url=os.getenv("DATABASE_URL", "postgresql://bot_user:bot_password@db:5432/tg_shop")
+        database_url=os.getenv("DATABASE_URL", "postgresql://bot_user:bot_password@db:5432/tg_shop"),
+        xui2=xui2_cfg
     )

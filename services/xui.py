@@ -144,3 +144,23 @@ class XUIServer:
         if response.status_code == 200:
             return response.json().get("success", False)
         return False
+
+
+def xui_from_config(config, secondary: bool = False) -> XUIServer:
+    """Create XUIServer instance from the provided `config` object.
+    If `secondary` is True and `config` contains `xui2`, use that, otherwise use `config.xui`.
+    """
+    cfg = None
+    if secondary and getattr(config, "xui2", None):
+        cfg = config.xui2
+    else:
+        cfg = config.xui
+
+    return XUIServer(
+        host=cfg.host,
+        port=cfg.port,
+        username=cfg.username,
+        password=cfg.password,
+        https=cfg.https,
+        web_base_path=cfg.web_base_path,
+    )

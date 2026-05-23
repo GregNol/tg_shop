@@ -136,7 +136,7 @@ async def promo_create_process_time(message: types.Message, state: FSMContext, r
         return
     data = await state.get_data()
     code, promo_type, value = data['promo_name'], data['promo_type'], data['promo_sum']
-    expires_at = (datetime.now() + timedelta(hours=hours)).isoformat()
+    expires_at = (datetime.utcnow() + timedelta(hours=hours)).isoformat()
     await repo.create_promo_code(code, promo_type, value, expires_at=expires_at)
     await message.answer(f"✅ Промокод <code>{code}</code> со сроком действия {hours} час(ов) создан!", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="В админ-панель", callback_data="admin_panel")]]))
     await state.clear()

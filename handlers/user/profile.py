@@ -119,17 +119,19 @@ async def handle_payment_method(callback: types.CallbackQuery, state: FSMContext
     else:
         await state.set_state(PaymentStates.waiting_amount)
         await state.update_data(payment_method=payment_method, fee_percentage=fee_percentage)
+        # Don't show commission to user for rollypay
+        fee_line = f"💸 Комиссия: <b>{fee_percentage}%</b>\n\n" if payment_method != "rollypay" else ""
         try:
             await callback.message.edit_caption(
                 caption=(f"💳 <b>Пополнение через {method_names[payment_method]}</b>\n\n"
-                        f"💸 Комиссия: <b>{fee_percentage}%</b>\n\n"
+                        f"{fee_line}"
                         "💰 Введите сумму пополнения (минимум 10 ₽):"),
                 reply_markup=user_kb.get_cancel_keyboard()
             )
         except Exception:
             await callback.message.edit_text(
                 text=(f"💳 <b>Пополнение через {method_names[payment_method]}</b>\n\n"
-                      f"💸 Комиссия: <b>{fee_percentage}%</b>\n\n"
+                      f"{fee_line}"
                       "💰 Введите сумму пополнения (минимум 10 ₽):"),
                 reply_markup=user_kb.get_cancel_keyboard()
             )
@@ -205,17 +207,19 @@ async def process_payment_amount(message: types.Message, state: FSMContext, repo
         return
 
     invoice_id, payment_url = invoice_result["invoice_id"], invoice_result["payment_url"]
-    expires_at = datetime.now() + timedelta(seconds=config.payments.payment_timeout_seconds)
+    expires_at = datetime.utcnow() + timedelta(seconds=config.payments.payment_timeout_seconds)
     method_names = {
         "lolz": "🔥 Lolz", "cryptobot": "🤖 CryptoBot", 
         "xrocet": "🚀 xRocet", "crystalpay": "💎 CrystalPay", 
         "yookassa": "💳 ЮKassa", "rollypay": "🔄 RollyPay"
     }
     
+    # Hide commission display for rollypay (still applied internally)
+    fee_line_display = f"💸 Комиссия: <b>{fee_amount:.2f} ₽</b>\n" if payment_method != "rollypay" else ""
     payment_text = (f"💳 <b>Счет на оплату создан!</b>\n\n"
                     f"🏪 Способ: {method_names[payment_method]}\n"
                     f"💰 К зачислению: <b>{amount:.2f} ₽</b>\n"
-                    f"💸 Комиссия: <b>{fee_amount:.2f} ₽</b>\n"
+                    f"{fee_line_display}"
                     f"💳 К оплате: <b>{total_amount:.2f} ₽</b>\n\n"
                     f"📄 ID счета: <code>{invoice_id}</code>")
     
@@ -270,7 +274,7 @@ async def promo_user_enter_code(message: types.Message, state: FSMContext, repo:
     user_id = message.from_user.id
     promo = await repo.get_promo_by_code(code)
     
-    if not promo or (promo['expires_at'] and datetime.fromisoformat(promo['expires_at']) < datetime.now()) or (promo['max_uses'] and promo['current_uses'] >= promo['max_uses']):
+    if not promo or (promo['expires_at'] and datetime.fromisoformat(promo['expires_at']) < datetime.utcnow()) or (promo['max_uses'] and promo['current_uses'] >= promo['max_uses']):
         await message.answer("❗ Промокод не найден или неактивен.")
         return
 

@@ -13,12 +13,21 @@ class AdminUserNavCallback(CallbackData, prefix="admin_user_nav"):
     action: str
     target_user_id: int
 
+class AdminVPNCallback(CallbackData, prefix="admin_vpn"):
+    action: str
+    client_uuid: str
+
+class PurchaseHistoryCallback(CallbackData, prefix="purchase_history"):
+    page: int
+    ptype: str
+
 def get_admin_panel_kb(is_maintenance: bool) -> InlineKeyboardMarkup:
     maint_text = "🟡 Тех. перерыв: Вкл" if is_maintenance else "⚪️ Тех. перерыв: Выкл"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👤 Управление пользователями", callback_data="admin_users"), InlineKeyboardButton(text="🎟️ Промокоды", callback_data="admin_promos")],
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast"), InlineKeyboardButton(text="📈 Управление ценами", callback_data="admin_prices")],
         [InlineKeyboardButton(text="💸 Настроить комиссии", callback_data="admin_fees"), InlineKeyboardButton(text="📊 Статистика платежек", callback_data="admin_payment_stats")],
+        [InlineKeyboardButton(text="💳 История покупок", callback_data=PurchaseHistoryCallback(page=1, ptype='all').pack())],
         [InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin_settings"), InlineKeyboardButton(text=maint_text, callback_data=MaintenanceCallback(action="toggle").pack())],
         [InlineKeyboardButton(text="📊 Общая статистика", callback_data="admin_stats"), InlineKeyboardButton(text="🔗 Fragment статус", callback_data="admin_fragment_status")],
         [InlineKeyboardButton(text="⬅️ В меню", callback_data="main_menu")],
@@ -41,6 +50,7 @@ def get_user_info_kb(is_blocked: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💰 Выдать баланс", callback_data="admin_give_balance"), InlineKeyboardButton(text="💳 Списать баланс", callback_data="admin_take_balance")],
         [InlineKeyboardButton(text="🔐 Выдать ВПН", callback_data="admin_give_vpn")],
+        [InlineKeyboardButton(text="🔐 VPN клиенты", callback_data="admin_vpn_clients")],
         [InlineKeyboardButton(text=block_btn_text, callback_data="admin_toggle_block"), InlineKeyboardButton(text="💸 Платежи", callback_data=UserPaymentsCallback(page=1).pack())],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_users")]
     ])

@@ -1,4 +1,5 @@
 import asyncpg
+import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
@@ -242,54 +243,112 @@ class Repository:
     # --- VPN Subscriptions Methods ---
     async def create_vpn_subscription(self, user_id: int, client_uuid: str, email: str, inbound_id: int, target_tariff_name: str, total_gb: int, expires_at: Optional[datetime] = None) -> asyncpg.Record:
         """Создать запись о новой VPN подписке пользователя."""
-        return await self.db.fetchrow(
-            """
-            INSERT INTO vpn_subscriptions (user_id, client_uuid, email, inbound_id, tariff_name, total_gb, expires_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            RETURNING *
-            """,
-            user_id, client_uuid, email, inbound_id, target_tariff_name, total_gb, expires_at
-        )
+        async with self.db.transaction():
+            # create subscription
+            sub = await self.db.fetchrow(
+                """
+                INSERT INTO vpn_subscriptions (user_id, tariff_name, total_gb, expires_at)
+                VALUES ($1, $2, $3, $4)
+                RETURNING *
+                """,
+                user_id, target_tariff_name, total_gb, expires_at
+            )
+            # create client entry linked to subscription
+            client = await self.db.fetchrow(
+                """
+                INSERT INTO vpn_subscription_clients (subscription_id, client_uuid, email, inbound_id, panel, total_gb)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING *
+                """,
+                sub['id'], client_uuid, email, inbound_id, 'primary', total_gb
+            )
+            logging.info(f"Created vpn subscription {sub['id']} and primary client {client_uuid} for user {user_id}")
+            # return a combined dict similar to legacy vpn_subscriptions row
+            return {
+                'subscription_id': sub['id'],
+                'client_uuid': client['client_uuid'],
+                'email': client['email'],
+                'inbound_id': client['inbound_id'],
+                'tariff_name': sub['tariff_name'],
+                'total_gb': client['total_gb'],
+                'expires_at': sub['expires_at'],
+                'is_active': client['is_active']
+            }
 
     async def get_vpn_subscription(self, client_uuid: str) -> Optional[asyncpg.Record]:
-        """Получить информацию о конкретной подписке по UUID."""
-        return await self.db.fetchrow("SELECT * FROM vpn_subscriptions WHERE client_uuid = $1", client_uuid)
+        """Получить информацию о конкретной подписке по UUID (client-level)."""
+        row = await self.db.fetchrow(
+            """
+            SELECT s.id as subscription_id, s.user_id, s.tariff_name, s.expires_at, c.client_uuid, c.email, c.inbound_id, c.panel, c.total_gb, c.is_active
+            FROM vpn_subscription_clients c
+            JOIN vpn_subscriptions s ON s.id = c.subscription_id
+            WHERE c.client_uuid = $1
+            """,
+            client_uuid
+        )
+        return row
 
     async def get_user_vpn_subscriptions(self, user_id: int) -> List[asyncpg.Record]:
-        """Получить все подписки конкретного пользователя."""
-        return await self.db.fetch("SELECT * FROM vpn_subscriptions WHERE user_id = $1 ORDER BY created_at DESC", user_id)
+        """Получить все подписки конкретного пользователя (каждый клиент отдельной строкой)."""
+        rows = await self.db.fetch(
+            """
+            SELECT s.id as subscription_id, s.user_id, s.tariff_name, s.expires_at, c.client_uuid, c.email, c.inbound_id, c.panel, c.total_gb, c.is_active, c.created_at
+            FROM vpn_subscriptions s
+            JOIN vpn_subscription_clients c ON c.subscription_id = s.id
+            WHERE s.user_id = $1
+            ORDER BY c.created_at DESC
+            """,
+            user_id
+        )
+        return rows
 
     async def update_vpn_subscription_status(self, client_uuid: str, is_active: bool):
-        """Обновить статус активности подписки."""
+        """Обновить статус активности клиентской записи подписки."""
         status = 1 if is_active else 0
-        await self.db.execute("UPDATE vpn_subscriptions SET is_active = $1 WHERE client_uuid = $2", status, client_uuid)
+        await self.db.execute("UPDATE vpn_subscription_clients SET is_active = $1 WHERE client_uuid = $2", status, client_uuid)
 
     async def extend_vpn_subscription(self, client_uuid: str, new_expires_at: Optional[datetime] = None, added_gb: int = 0):
-        """Продлить подписку (изменить дату окончания и/или добавить трафик)."""
-        await self.db.execute(
-            """
-            UPDATE vpn_subscriptions 
-            SET expires_at = COALESCE($1, expires_at), 
-                total_gb = total_gb + $2,
-                is_active = 1
-            WHERE client_uuid = $3
-            """,
-            new_expires_at, added_gb, client_uuid
-        )
+        """Продлить подписку: обновить expires_at у subscription и добавить трафик конкретному клиенту."""
+        async with self.db.transaction():
+            # find client and subscription
+            row = await self.db.fetchrow("SELECT subscription_id FROM vpn_subscription_clients WHERE client_uuid = $1", client_uuid)
+            if not row:
+                return
+            sub_id = row['subscription_id']
+            await self.db.execute("UPDATE vpn_subscriptions SET expires_at = COALESCE($1, expires_at) WHERE id = $2", new_expires_at, sub_id)
+            if added_gb:
+                await self.db.execute("UPDATE vpn_subscription_clients SET total_gb = total_gb + $1 WHERE client_uuid = $2", added_gb, client_uuid)
+            await self.db.execute("UPDATE vpn_subscription_clients SET is_active = 1 WHERE client_uuid = $1", client_uuid)
 
     async def change_vpn_subscription_tariff(self, client_uuid: str, new_tariff_name: str, new_total_gb: Optional[int] = None, new_expires_at: Optional[datetime] = None):
-        """Сменить тариф подписки (изменить название, а также опционально обновить трафик и дату)."""
-        await self.db.execute(
-            """
-            UPDATE vpn_subscriptions 
-            SET tariff_name = $1,
-                total_gb = COALESCE($2, total_gb),
-                expires_at = COALESCE($3, expires_at)
-            WHERE client_uuid = $4
-            """,
-            new_tariff_name, new_total_gb, new_expires_at, client_uuid
-        )
+        """Сменить тариф подписки: обновить subscription.tariff_name и при необходимости client.total_gb/expires_at."""
+        async with self.db.transaction():
+            row = await self.db.fetchrow("SELECT subscription_id FROM vpn_subscription_clients WHERE client_uuid = $1", client_uuid)
+            if not row:
+                return
+            sub_id = row['subscription_id']
+            await self.db.execute("UPDATE vpn_subscriptions SET tariff_name = $1 WHERE id = $2", new_tariff_name, sub_id)
+            if new_total_gb is not None:
+                await self.db.execute("UPDATE vpn_subscription_clients SET total_gb = $1 WHERE client_uuid = $2", new_total_gb, client_uuid)
+            if new_expires_at is not None:
+                await self.db.execute("UPDATE vpn_subscriptions SET expires_at = $1 WHERE id = $2", new_expires_at, sub_id)
 
     async def delete_vpn_subscription(self, client_uuid: str):
-        """Удалить запись о подписке."""
-        await self.db.execute("DELETE FROM vpn_subscriptions WHERE client_uuid = $1", client_uuid)
+        """Удалить клиентскую запись подписки (и каскадно, если нужно, subscription)."""
+        # delete client row
+        await self.db.execute("DELETE FROM vpn_subscription_clients WHERE client_uuid = $1", client_uuid)
+
+    async def create_vpn_subscription_client(self, subscription_id: int, client_uuid: str, email: str, inbound_id: int, panel: str = 'secondary', total_gb: int = 0) -> asyncpg.Record:
+        """Добавить client запись к существующей подписке."""
+        return await self.db.fetchrow(
+            """
+            INSERT INTO vpn_subscription_clients (subscription_id, client_uuid, email, inbound_id, panel, total_gb)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING *
+            """,
+            subscription_id, client_uuid, email, inbound_id, panel, total_gb
+        )
+
+
+    async def get_subscription_clients(self, subscription_id: int):
+        return await self.db.fetch("SELECT * FROM vpn_subscription_clients WHERE subscription_id = $1 ORDER BY created_at DESC", subscription_id)

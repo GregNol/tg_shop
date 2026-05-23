@@ -1,10 +1,12 @@
 import re
 from aiogram import F, Router, types
 from aiogram.fsm.context import FSMContext
+import logging
 
 from services.repository import Repository
 from services.fragment_sender import FragmentSender
 from services.profit_calculator import ProfitCalculator
+from services.star_pricing import star_pricing_service
 from keyboards import user_kb
 from states.user import BuyStarsGiftStates, BuyStarsSelfStates, BuyStarsConfirmStates
 from .start import format_text_with_user_data
@@ -12,6 +14,7 @@ from config import Config
 from utils.safe_message import safe_delete_and_send_photo, safe_edit_message
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 @router.callback_query(F.data == "buy_stars")
 async def buy_stars_callback(call: types.CallbackQuery, state: FSMContext, config: Config):
@@ -36,7 +39,7 @@ async def buy_stars_self_amount_callback(call: types.CallbackQuery, state: FSMCo
     await state.set_state(BuyStarsSelfStates.waiting_for_self_amount)
 
 @router.message(BuyStarsSelfStates.waiting_for_self_amount)
-async def process_self_amount(message: types.Message, state: FSMContext, repo: Repository):
+async def process_self_amount(message: types.Message, state: FSMContext, repo: Repository, config: Config):
     try:
         amount = int(message.text)
         if amount < 50:
@@ -46,7 +49,7 @@ async def process_self_amount(message: types.Message, state: FSMContext, repo: R
         await message.answer("❗ Введите целое число.")
         return
 
-    star_price = float(await repo.get_setting('star_price'))
+    star_price = await star_pricing_service.get_star_price(repo, config)
     total = round(amount * star_price, 2)
     user = await repo.get_user(message.from_user.id)
     discount = user["discount"]
@@ -65,16 +68,16 @@ async def process_self_amount(message: types.Message, state: FSMContext, repo: R
 
 @router.callback_query(F.data == "buy_stars_self_packs")
 @router.callback_query(F.data.startswith("buy_stars_self_packs_page_"))
-async def buy_stars_self_packs_callback(call: types.CallbackQuery, repo: Repository):
+async def buy_stars_self_packs_callback(call: types.CallbackQuery, repo: Repository, config: Config):
     page = int(call.data.split("_")[-1]) if "page" in call.data else 0
     user = await repo.get_user(call.from_user.id)
-    star_price = float(await repo.get_setting('star_price'))
+    star_price = await star_pricing_service.get_star_price(repo, config)
     await safe_edit_message(call, text="<b>Выберите готовый пакет звёзд:</b>", reply_markup=user_kb.get_star_packs_kb(page, "buy_stars_self", star_price, user["discount"], back_target="buy_stars_self"))
 
 @router.callback_query(F.data.startswith("buy_stars_self_pack_"))
-async def buy_stars_self_pack_selected(call: types.CallbackQuery, state: FSMContext, repo: Repository):
+async def buy_stars_self_pack_selected(call: types.CallbackQuery, state: FSMContext, repo: Repository, config: Config):
     amount = int(call.data.split("_")[-1])
-    star_price = float(await repo.get_setting('star_price'))
+    star_price = await star_pricing_service.get_star_price(repo, config)
     total = round(amount * star_price, 2)
     user = await repo.get_user(call.from_user.id)
     discount = user["discount"]
@@ -111,7 +114,16 @@ async def buy_stars_self_confirm_callback(call: types.CallbackQuery, state: FSMC
         return
         
     profit_calc = ProfitCalculator()
-    cost_ton, profit_rub = await profit_calc.calculate_stars_profit(amount, total)
+    cost_per_star_ton = await star_pricing_service.get_star_cost_ton(repo, config)
+    cost_ton, profit_rub = await profit_calc.calculate_stars_profit(amount, total, cost_per_star_ton)
+    try:
+        margin = profit_calc.get_profit_margin(total - profit_rub, total)
+    except Exception:
+        margin = 0.0
+    logger.info(
+        "Stars sale: buyer=%s, amount=%d, total=%.2f, cost_per_star_ton=%.8f, cost_ton=%.6f, profit_rub=%.2f, margin=%.2f%%",
+        user_obj.username or user_obj.id, amount, total, cost_per_star_ton, cost_ton, profit_rub, margin
+    )
     
     success_text_template = await repo.get_setting('purchase_success_text')
     success_text = format_text_with_user_data(success_text_template, user_obj)
@@ -175,20 +187,20 @@ async def buy_stars_gift_amount_callback(call: types.CallbackQuery, state: FSMCo
 
 @router.callback_query(F.data == "buy_stars_gift_packs")
 @router.callback_query(F.data.startswith("buy_stars_gift_packs_page_"))
-async def buy_stars_gift_packs_callback(call: types.CallbackQuery, state: FSMContext, repo: Repository):
+async def buy_stars_gift_packs_callback(call: types.CallbackQuery, state: FSMContext, repo: Repository, config: Config):
     page = int(call.data.split("_")[-1]) if "page" in call.data else 0
     data = await state.get_data()
     user = await repo.get_user(call.from_user.id)
-    star_price = float(await repo.get_setting('star_price'))
+    star_price = await star_pricing_service.get_star_price(repo, config)
     
     text = f"Получатель: <code>@{data.get('recipient')}</code>\n\n<b>Выберите пакет звёзд для подарка:</b>"
     kb = user_kb.get_star_packs_kb(page, "buy_stars_gift", star_price, user["discount"], back_target="back_to_gift_choice")
     await safe_edit_message(call, text=text, reply_markup=kb)
 
 @router.callback_query(F.data.startswith("buy_stars_gift_pack_"))
-async def buy_stars_gift_pack_selected(call: types.CallbackQuery, state: FSMContext, repo: Repository):
+async def buy_stars_gift_pack_selected(call: types.CallbackQuery, state: FSMContext, repo: Repository, config: Config):
     amount = int(call.data.split("_")[-1])
-    star_price = float(await repo.get_setting('star_price'))
+    star_price = await star_pricing_service.get_star_price(repo, config)
     total = round(amount * star_price, 2)
     user = await repo.get_user(call.from_user.id)
     data = await state.get_data()
@@ -208,7 +220,7 @@ async def buy_stars_gift_pack_selected(call: types.CallbackQuery, state: FSMCont
     await state.set_state(BuyStarsConfirmStates.waiting_for_gift_confirm)
 
 @router.message(BuyStarsGiftStates.waiting_for_gift_amount)
-async def process_gift_amount(message: types.Message, state: FSMContext, repo: Repository):
+async def process_gift_amount(message: types.Message, state: FSMContext, repo: Repository, config: Config):
     try:
         amount = int(message.text)
         if amount < 50:
@@ -218,7 +230,7 @@ async def process_gift_amount(message: types.Message, state: FSMContext, repo: R
         await message.answer("❗ Введите целое число.")
         return
 
-    star_price = float(await repo.get_setting('star_price'))
+    star_price = await star_pricing_service.get_star_price(repo, config)
     total = round(amount * star_price, 2)
     data = await state.get_data()
     recipient = data.get("recipient")
@@ -252,7 +264,16 @@ async def buy_stars_gift_confirm_callback(call: types.CallbackQuery, state: FSMC
         return
         
     profit_calc = ProfitCalculator()
-    cost_ton, profit_rub = await profit_calc.calculate_stars_profit(amount, total)
+    cost_per_star_ton = await star_pricing_service.get_star_cost_ton(repo, config)
+    cost_ton, profit_rub = await profit_calc.calculate_stars_profit(amount, total, cost_per_star_ton)
+    try:
+        margin = profit_calc.get_profit_margin(total - profit_rub, total)
+    except Exception:
+        margin = 0.0
+    logger.info(
+        "Stars gift: buyer=%s, recipient=%s, amount=%d, total=%.2f, cost_per_star_ton=%.8f, cost_ton=%.6f, profit_rub=%.2f, margin=%.2f%%",
+        user_obj.username or user_obj.id, recipient, amount, total, cost_per_star_ton, cost_ton, profit_rub, margin
+    )
     
     success_text_template = await repo.get_setting('purchase_success_text')
     success_text = format_text_with_user_data(success_text_template, user_obj)

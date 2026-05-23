@@ -8,8 +8,12 @@ from services.repository import Repository
 from services.ton_api import get_ton_balance
 from services.profit_calculator import ProfitCalculator
 from keyboards.admin_kb import get_admin_panel_kb, get_fee_settings_keyboard, get_back_to_admin_keyboard
+from keyboards.admin_kb import PurchaseHistoryCallback
 from utils.safe_message import safe_answer, safe_answer_document, safe_delete_message
 from config import Config
+import io
+import csv
+from aiogram import types
 
 router = Router()
 
@@ -26,6 +30,33 @@ async def admin_panel_callback(call: types.CallbackQuery, state: FSMContext, rep
 
     await safe_delete_message(call)
     await safe_answer(call, text=f"<b>⚙️ Админ панель</b>\n\n{balance_text}\n\nВыберите действие:", reply_markup=get_admin_panel_kb(is_maintenance))
+
+@router.callback_query(F.data.startswith('purchase_history_export|'))
+async def export_purchase_history(call: types.CallbackQuery, repo: Repository):
+    try:
+        _, ptype = call.data.split('|', 1)
+    except Exception:
+        ptype = 'all'
+
+    if ptype == 'all':
+        rows = await repo.db.fetch("SELECT * FROM purchase_history ORDER BY created_at DESC")
+    else:
+        rows = await repo.db.fetch("SELECT * FROM purchase_history WHERE purchase_type = $1 ORDER BY created_at DESC", ptype)
+
+    # prepare CSV
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['id','user_id','purchase_type','item_description','amount','cost','profit','created_at'])
+    for r in rows:
+        created = r['created_at'].strftime('%Y-%m-%d %H:%M:%S') if r['created_at'] else ''
+        writer.writerow([r['id'], r['user_id'], r['purchase_type'], r['item_description'], r['amount'], f"{r['cost']:.2f}", f"{r.get('profit',0):.2f}", created])
+
+    csv_bytes = output.getvalue().encode('utf-8')
+    bio = io.BytesIO(csv_bytes)
+    bio.seek(0)
+    filename = f"purchase_history_{ptype}_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.csv"
+    document = types.InputFile(bio, filename=filename)
+    await safe_answer_document(call, document=document, caption=f"Экспорт: {ptype}")
 
 @router.callback_query(F.data == "admin_stats")
 async def show_statistics(call: types.CallbackQuery, repo: Repository):
@@ -86,7 +117,7 @@ async def show_detailed_statistics(call: types.CallbackQuery, repo: Repository):
 @router.callback_query(F.data == "admin_export_db")
 async def export_database(call: types.CallbackQuery, config: Config):
     document = types.FSInputFile(config.database_path)
-    await call.message.answer_document(document, caption=f"📊 Экспорт базы данных от {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    await call.message.answer_document(document, caption=f"📊 Экспорт базы данных от {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}")
     await call.answer("База данных выгружена", show_alert=False)
 
 @router.callback_query(F.data == "admin_payment_stats")
@@ -116,6 +147,56 @@ async def show_fee_settings(call: types.CallbackQuery, repo: Repository):
             f"💎 CrystalPay: <code>{fees.get('crystalpay_fee', 'N/A')}%</code>\n\n"
             "Выберите систему для изменения:")
     await call.message.edit_text(text, reply_markup=get_fee_settings_keyboard())
+
+
+@router.callback_query(PurchaseHistoryCallback.filter())
+async def show_purchase_history(call: types.CallbackQuery, callback_data: PurchaseHistoryCallback, repo: Repository):
+    page = callback_data.page or 1
+    ptype = callback_data.ptype or 'all'
+    PAGE_SIZE = 10
+
+    # build count query
+    if ptype == 'all':
+        total_row = await repo.db.fetchrow("SELECT COUNT(*) as cnt FROM purchase_history")
+        rows = await repo.db.fetch("SELECT * FROM purchase_history ORDER BY created_at DESC LIMIT $1 OFFSET $2", PAGE_SIZE, (page-1)*PAGE_SIZE)
+    else:
+        total_row = await repo.db.fetchrow("SELECT COUNT(*) as cnt FROM purchase_history WHERE purchase_type = $1", ptype)
+        rows = await repo.db.fetch("SELECT * FROM purchase_history WHERE purchase_type = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3", ptype, PAGE_SIZE, (page-1)*PAGE_SIZE)
+
+    total = int(total_row['cnt']) if total_row and total_row['cnt'] is not None else 0
+    max_page = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+
+    text_lines = [f"📜 История покупок — фильтр: <b>{ptype}</b> — всего: {total}\n"]
+    if not rows:
+        text_lines.append("Нет записей.")
+    else:
+        for r in rows:
+            ts = r['created_at'].strftime('%Y-%m-%d %H:%M') if r['created_at'] else '-'
+            text_lines.append(f"• ID:{r['id']} User:{r['user_id']} Type:{r['purchase_type']} Item:{r['item_description']} Amount:{r['amount']} Cost:{r['cost']:.2f} ₽ [{ts}]")
+
+    # keyboard: filters and pagination
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb_rows = []
+    # filters
+    filter_opts = [('all','Все'), ('vpn','VPN'), ('vpn_autotopup','Автодокупка'), ('vpn_gb','Докупка GB'), ('vpn_premium','Premium'), ('stars','Stars')]
+    filter_buttons = [InlineKeyboardButton(text=label, callback_data=PurchaseHistoryCallback(page=1, ptype=code).pack()) for code,label in filter_opts]
+    # arrange filter buttons in two rows
+    kb_rows.append(filter_buttons[:3])
+    kb_rows.append(filter_buttons[3:])
+
+    nav_row = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton(text='⬅️', callback_data=PurchaseHistoryCallback(page=page-1, ptype=ptype).pack()))
+    nav_row.append(InlineKeyboardButton(text=f"{page}/{max_page}", callback_data='ignore'))
+    if page < max_page:
+        nav_row.append(InlineKeyboardButton(text='➡️', callback_data=PurchaseHistoryCallback(page=page+1, ptype=ptype).pack()))
+    kb_rows.append(nav_row)
+    kb_rows.append([InlineKeyboardButton(text='⬅️ Назад', callback_data='admin_panel')])
+    # export button
+    kb_rows.append([InlineKeyboardButton(text='⬇️ Выгрузить CSV', callback_data=f'purchase_history_export|{ptype}')])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await call.message.edit_text('\n'.join(text_lines), reply_markup=kb)
 
 @router.callback_query(F.data.startswith("set_fee_"))
 async def set_fee_start(call: types.CallbackQuery, state: FSMContext):

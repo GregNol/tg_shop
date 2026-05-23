@@ -22,16 +22,27 @@ class ProfitCalculator:
         
         return self.ton_rub_rate
     
-    async def calculate_stars_profit(self, quantity: int, selling_price: float) -> Tuple[float, float]:
+    async def calculate_stars_profit(self, quantity: int, selling_price: float, cost_per_star_ton: float | None = None) -> Tuple[float, float]:
 
-        cost_per_star_ton = 0.01
-        
-        cost_ton = quantity * cost_per_star_ton
+        # Allow caller to provide actual per-star TON cost (dynamic mode), otherwise use default
+        if cost_per_star_ton is None:
+            cost_per_star_ton = 0.01
+
+        cost_ton = quantity * float(cost_per_star_ton)
         ton_rate = await self.get_ton_rub_rate()
         cost_rub = cost_ton * ton_rate
-        
+
         profit_rub = selling_price - cost_rub
-        
+
+        # Log calculation details
+        try:
+            logging.info(
+                "Stars profit calc: quantity=%d, cost_per_star_ton=%.8f, ton_rate=%.2f, cost_ton=%.6f, cost_rub=%.2f, selling_price=%.2f, profit_rub=%.2f",
+                quantity, float(cost_per_star_ton), ton_rate, cost_ton, cost_rub, selling_price, profit_rub
+            )
+        except Exception:
+            logging.exception("Failed to log profit calculation")
+
         return cost_ton, profit_rub
     
     async def calculate_premium_profit(self, months: int, selling_price: float) -> Tuple[float, float]:
