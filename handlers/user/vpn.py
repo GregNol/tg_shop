@@ -142,15 +142,29 @@ async def buy_vpn_plan_callback(call: types.CallbackQuery, repo: Repository, con
         )
 
         if client_id:
-            await repo.create_vpn_subscription(
-                user_id=call.from_user.id,
-                client_uuid=client_id,
-                email=client_email,
-                inbound_id=inbound_id,
-                target_tariff_name='Стандартный',
-                total_gb=0,
-                expires_at=new_expiry
-            )
+            try:
+                await repo.create_vpn_subscription(
+                    user_id=call.from_user.id,
+                    client_uuid=client_id,
+                    email=client_email,
+                    inbound_id=inbound_id,
+                    target_tariff_name='Стандартный',
+                    total_gb=0,
+                    expires_at=new_expiry
+                )
+            except Exception:
+                logging.exception(
+                    "User VPN standard create failed: user_id=%s client_uuid=%s email=%s inbound_id=%s expires_at=%s",
+                    call.from_user.id,
+                    client_id,
+                    client_email,
+                    inbound_id,
+                    new_expiry,
+                )
+                await repo.update_user_balance(call.from_user.id, vpn_price, operation='add')
+                await safe_edit_message(call, text="❌ Ошибка записи подписки в БД. Средства возвращены. Подробности в логах.")
+                await xui.close()
+                return
             sub_url = f"{xui.host_url}/sub/{client_id}"
             kb = user_kb.get_vpn_menu_kb(True, vpn_price, int(await repo.get_setting('vpn_premium_price') or 400))
             await safe_edit_message(call, text=f"✅ Подписка ВПН успешно оформлена до {new_expiry.strftime('%Y-%m-%d %H:%M')}\nВаша ссылка для подключения:\n<code>{sub_url}</code>", reply_markup=kb)
@@ -248,25 +262,41 @@ async def buy_vpn_premium_callback(call: types.CallbackQuery, repo: Repository, 
         return
 
     # persist to DB: create subscription (primary client) and then add secondary client linked to it
-    sub = await repo.create_vpn_subscription(
-        user_id=call.from_user.id,
-        client_uuid=client_id_p1,
-        email=client_email_p1,
-        inbound_id=inbound_id_p1,
-        target_tariff_name='Premium+',
-        total_gb=0,
-        expires_at=new_expiry
-    )
+    try:
+        sub = await repo.create_vpn_subscription(
+            user_id=call.from_user.id,
+            client_uuid=client_id_p1,
+            email=client_email_p1,
+            inbound_id=inbound_id_p1,
+            target_tariff_name='Premium+',
+            total_gb=0,
+            expires_at=new_expiry
+        )
 
-    # create secondary client record linked to same subscription
-    sec_client = await repo.create_vpn_subscription_client(
-        subscription_id=sub['subscription_id'],
-        client_uuid=client_id_p2,
-        email=client_email_p2,
-        inbound_id=inbound_id_p2,
-        panel='secondary',
-        total_gb=100
-    )
+        # create secondary client record linked to same subscription
+        sec_client = await repo.create_vpn_subscription_client(
+            subscription_id=sub['subscription_id'],
+            client_uuid=client_id_p2,
+            email=client_email_p2,
+            inbound_id=inbound_id_p2,
+            panel='secondary',
+            total_gb=100
+        )
+    except Exception:
+        logging.exception(
+            "User VPN premium DB create failed: user_id=%s p1_uuid=%s p2_uuid=%s p1_inbound=%s p2_inbound=%s expires_at=%s",
+            call.from_user.id,
+            client_id_p1,
+            client_id_p2,
+            inbound_id_p1,
+            inbound_id_p2,
+            new_expiry,
+        )
+        await repo.update_user_balance(call.from_user.id, premium_price, operation='add')
+        await safe_edit_message(call, text="❌ Ошибка записи Premium+ подписки в БД. Средства возвращены. Подробности в логах.")
+        await xui_primary.close()
+        await xui_secondary.close()
+        return
     logging.info(f"Premium+ subscription created for user {call.from_user.id}: primary={client_id_p1}, secondary={client_id_p2}, sub_id={sub['subscription_id']}")
 
     sub_url_p1 = f"{xui_primary.host_url}/sub/{client_id_p1}"

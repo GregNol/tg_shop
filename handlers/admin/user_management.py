@@ -206,66 +206,102 @@ async def admin_give_vpn_process(message: types.Message, state: FSMContext, repo
     from services.xui import xui_from_config
     xui = xui_from_config(config)
     
-    await xui.login()
-    subs = await repo.get_user_vpn_subscriptions(target_user_id)
-    active_sub = None
-    for sub in subs:
-        if sub['tariff_name'] == 'Стандартный':
-            active_sub = sub
-            break
+    try:
+        login_ok = await xui.login()
+        if not login_ok:
+            logging.error("Admin VPN issue failed at login: admin_id=%s target_user_id=%s", message.from_user.id, target_user_id)
+            await message.answer("❌ Ошибка подключения к XUI панели.")
+            return
 
-    duration_ms = days * 24 * 60 * 60 * 1000
-    
-    if active_sub:
-        current_expiry = active_sub['expires_at']
-        if current_expiry and current_expiry > datetime.utcnow():
-            from datetime import timedelta
-            new_expiry = current_expiry + timedelta(days=days)
+        subs = await repo.get_user_vpn_subscriptions(target_user_id)
+        active_sub = None
+        for sub in subs:
+            if sub['tariff_name'] == 'Стандартный':
+                active_sub = sub
+                break
+
+        if active_sub:
+            current_expiry = active_sub['expires_at']
+            if current_expiry and current_expiry > datetime.utcnow():
+                from datetime import timedelta
+                new_expiry = current_expiry + timedelta(days=days)
+            else:
+                from datetime import timedelta
+                new_expiry = datetime.utcnow() + timedelta(days=days)
+
+            new_expiry_ms = int(new_expiry.timestamp() * 1000)
+            success = await xui.update_client(
+                inbound_id=active_sub['inbound_id'],
+                client_uuid=active_sub['client_uuid'],
+                email=active_sub['email'],
+                enable=True,
+                expire_time=new_expiry_ms
+            )
+            if success:
+                await repo.extend_vpn_subscription(active_sub['client_uuid'], new_expires_at=new_expiry)
+                await message.answer(f"✅ ВПН успешно продлен пользователю {target_user_id} на {days} дней. Новая дата окончания: {new_expiry.strftime('%Y-%m-%d %H:%M')}")
+            else:
+                logging.error(
+                    "Admin VPN extend failed in XUI: admin_id=%s target_user_id=%s client_uuid=%s inbound_id=%s",
+                    message.from_user.id,
+                    target_user_id,
+                    active_sub['client_uuid'],
+                    active_sub['inbound_id'],
+                )
+                await message.answer("❌ Ошибка при продлении в XUI.")
         else:
             from datetime import timedelta
             new_expiry = datetime.utcnow() + timedelta(days=days)
-            
-        new_expiry_ms = int(new_expiry.timestamp() * 1000)
-        success = await xui.update_client(
-            inbound_id=active_sub['inbound_id'],
-            client_uuid=active_sub['client_uuid'],
-            email=active_sub['email'],
-            enable=True,
-            expire_time=new_expiry_ms
-        )
-        if success:
-            await repo.extend_vpn_subscription(active_sub['client_uuid'], new_expires_at=new_expiry)
-            await message.answer(f"✅ ВПН успешно продлен пользователю {target_user_id} на {days} дней. Новая дата окончания: {new_expiry.strftime('%Y-%m-%d %H:%M')}")
-        else:
-            await message.answer("❌ Ошибка при продлении в XUI.")
-    else:
-        from datetime import timedelta
-        new_expiry = datetime.utcnow() + timedelta(days=days)
-        new_expiry_ms = int(new_expiry.timestamp() * 1000)
-        client_email = f"{target_user_id}_{user['username'] or 'user'}"
-        inbound_id = config.xui.inbound_id
-        
-        client_id = await xui.add_client(
-            inbound_id=inbound_id,
-            email=client_email,
-            expire_time=new_expiry_ms
-        )
-        if client_id:
-            await repo.create_vpn_subscription(
-                user_id=target_user_id,
-                client_uuid=client_id,
-                email=client_email,
+            new_expiry_ms = int(new_expiry.timestamp() * 1000)
+            client_email = f"{target_user_id}_{user['username'] or 'user'}"
+            inbound_id = config.xui.inbound_id
+
+            client_id = await xui.add_client(
                 inbound_id=inbound_id,
-                target_tariff_name='Стандартный',
-                total_gb=0,
-                expires_at=new_expiry
+                email=client_email,
+                expire_time=new_expiry_ms
             )
-            sub_url = f"{xui.host_url}/sub/{client_id}"
-            await message.answer(f"✅ ВПН успешно выдан пользователю {target_user_id} на {days} дней.\nДо: {new_expiry.strftime('%Y-%m-%d %H:%M')}\nСсылка: <code>{sub_url}</code>")
-        else:
-            await message.answer("❌ Ошибка при выдаче в XUI.")
-            
-    await xui.close()
+            if client_id:
+                try:
+                    await repo.create_vpn_subscription(
+                        user_id=target_user_id,
+                        client_uuid=client_id,
+                        email=client_email,
+                        inbound_id=inbound_id,
+                        target_tariff_name='Стандартный',
+                        total_gb=0,
+                        expires_at=new_expiry
+                    )
+                except Exception:
+                    logging.exception(
+                        "Admin VPN issue DB create failed: admin_id=%s target_user_id=%s client_uuid=%s email=%s inbound_id=%s expires_at=%s",
+                        message.from_user.id,
+                        target_user_id,
+                        client_id,
+                        client_email,
+                        inbound_id,
+                        new_expiry,
+                    )
+                    await message.answer("❌ Ошибка записи подписки в БД. Подробности в логах.")
+                    return
+
+                sub_url = f"{xui.host_url}/sub/{client_id}"
+                await message.answer(f"✅ ВПН успешно выдан пользователю {target_user_id} на {days} дней.\nДо: {new_expiry.strftime('%Y-%m-%d %H:%M')}\nСсылка: <code>{sub_url}</code>")
+            else:
+                logging.error(
+                    "Admin VPN issue failed in XUI add_client: admin_id=%s target_user_id=%s email=%s inbound_id=%s",
+                    message.from_user.id,
+                    target_user_id,
+                    client_email,
+                    inbound_id,
+                )
+                await message.answer("❌ Ошибка при выдаче в XUI.")
+    except Exception:
+        logging.exception("Unhandled error in admin_give_vpn_process: admin_id=%s target_user_id=%s days=%s", message.from_user.id, target_user_id, days)
+        await message.answer("❌ Внутренняя ошибка при выдаче VPN. Подробности в логах.")
+    finally:
+        await xui.close()
+
     dummy_message = await message.answer("Возврат...")
     await show_user_info_menu(dummy_message, state, repo)
     await dummy_message.delete()
