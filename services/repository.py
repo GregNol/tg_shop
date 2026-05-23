@@ -300,50 +300,23 @@ class Repository:
                             raise
 
                 if sub is None and use_legacy_insert:
-                    try:
-                        sub = await self.db.fetchrow(
-                            """
-                            INSERT INTO vpn_subscriptions (user_id, client_uuid, email, inbound_id, tariff_name, total_gb, expires_at)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7)
-                            RETURNING *
-                            """,
-                            user_id, client_uuid, email, inbound_id, target_tariff_name, total_gb, expires_at
-                        )
-                    except asyncpg.UniqueViolationError as e:
-                        if 'vpn_subscriptions_email_key' in str(e):
-                            logging.warning(
-                                "create_vpn_subscription legacy insert hit duplicate email, switching to update: "
-                                "user_id=%s email=%s inbound_id=%s client_uuid=%s",
-                                user_id,
-                                email,
-                                inbound_id,
-                                client_uuid,
-                            )
-                            sub = await self.db.fetchrow(
-                                """
-                                UPDATE vpn_subscriptions
-                                SET client_uuid = $1,
-                                    email = $2,
-                                    inbound_id = $3,
-                                    tariff_name = $4,
-                                    total_gb = $5,
-                                    expires_at = $6,
-                                    is_active = 1
-                                WHERE user_id = $7 AND email = $2
-                                RETURNING *
-                                """,
-                                client_uuid,
-                                email,
-                                inbound_id,
-                                target_tariff_name,
-                                total_gb,
-                                expires_at,
-                                user_id,
-                            )
-                            if sub is None:
-                                raise
-                        else:
-                            raise
+                    sub = await self.db.fetchrow(
+                        """
+                        INSERT INTO vpn_subscriptions (user_id, client_uuid, email, inbound_id, tariff_name, total_gb, expires_at)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        ON CONFLICT (email)
+                        DO UPDATE SET
+                            user_id = EXCLUDED.user_id,
+                            client_uuid = EXCLUDED.client_uuid,
+                            inbound_id = EXCLUDED.inbound_id,
+                            tariff_name = EXCLUDED.tariff_name,
+                            total_gb = EXCLUDED.total_gb,
+                            expires_at = EXCLUDED.expires_at,
+                            is_active = 1
+                        RETURNING *
+                        """,
+                        user_id, client_uuid, email, inbound_id, target_tariff_name, total_gb, expires_at
+                    )
 
                 # create client entry linked to subscription
                 client = await self.db.fetchrow(
