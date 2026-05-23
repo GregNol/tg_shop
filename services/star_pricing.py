@@ -35,11 +35,13 @@ class StarPricingService:
         markup_raw = await repo.get_setting("star_markup_percent")
         min_price_raw = await repo.get_setting("star_min_price")
         max_price_raw = await repo.get_setting("star_max_price")
+        rollypay_fee_raw = await repo.get_setting("rollypay_fee")
 
         target_profit_per_100 = float(target_profit_per_100_raw) if target_profit_per_100_raw else 15.0
         markup_percent = float(markup_raw) if markup_raw else 20.0
         min_price = float(min_price_raw) if min_price_raw else 0.0
         max_price = float(max_price_raw) if max_price_raw else 0.0
+        rollypay_fee = float(rollypay_fee_raw) if rollypay_fee_raw else 12.0
 
         ton_rate = await self._get_ton_rub_rate_cached()
         base_cost_rub_per_star = cost_ton * ton_rate
@@ -50,6 +52,10 @@ class StarPricingService:
         else:
             calculated_price = base_cost_rub_per_star * (1 + (markup_percent / 100.0))
 
+        if rollypay_fee > 0:
+            fee_multiplier = 1 / (1 - (rollypay_fee / 100.0))
+            calculated_price *= fee_multiplier
+
         if min_price > 0:
             calculated_price = max(calculated_price, min_price)
         if max_price > 0:
@@ -58,8 +64,8 @@ class StarPricingService:
         # Log details about the computed price
         try:
             logging.info(
-                "Star pricing: mode=dynamic, cost_ton=%.6f, ton_rate=%.2f, base_cost_rub_per_star=%.6f, calculated_price=%.4f, min_price=%.2f, max_price=%.2f, target_profit_per_100=%.2f, markup_percent=%.2f",
-                cost_ton, ton_rate, base_cost_rub_per_star, calculated_price, min_price, max_price, target_profit_per_100, markup_percent
+                "Star pricing: mode=dynamic, cost_ton=%.6f, ton_rate=%.2f, base_cost_rub_per_star=%.6f, calculated_price=%.4f, min_price=%.2f, max_price=%.2f, target_profit_per_100=%.2f, markup_percent=%.2f, rollypay_fee=%.2f",
+                cost_ton, ton_rate, base_cost_rub_per_star, calculated_price, min_price, max_price, target_profit_per_100, markup_percent, rollypay_fee
             )
         except Exception:
             logging.exception("Failed to log star pricing calculation")

@@ -181,6 +181,8 @@ async def process_payment_amount(message: types.Message, state: FSMContext, repo
         return
 
     fee_percentage = data["fee_percentage"]
+    if payment_method == "rollypay":
+        fee_percentage = 0.0
     fee_amount = round(amount * fee_percentage / 100, 2)
     total_amount = amount + fee_amount
     

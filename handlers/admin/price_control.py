@@ -27,6 +27,7 @@ async def admin_prices_menu(call: types.CallbackQuery, repo: Repository, config:
         'star_cost_ton',
         'star_target_profit_per_100',
         'star_markup_percent',
+        'rollypay_fee',
         'star_min_price',
         'star_max_price',
         'star_cost_ton_quote_username',
@@ -38,6 +39,7 @@ async def admin_prices_menu(call: types.CallbackQuery, repo: Repository, config:
     static_star_cost_ton = float(settings.get('star_cost_ton') or 0.01)
     target_profit_per_100 = float(settings.get('star_target_profit_per_100') or 15)
     markup_percent = float(settings.get('star_markup_percent') or 20)
+    rollypay_fee = float(settings.get('rollypay_fee') or 12)
     min_price = float(settings.get('star_min_price') or 0)
     max_price = float(settings.get('star_max_price') or 0)
     quote_username = (settings.get('star_cost_ton_quote_username') or '').strip().lstrip('@') or 'не задан'
@@ -62,6 +64,7 @@ async def admin_prices_menu(call: types.CallbackQuery, repo: Repository, config:
         f"• Целевая прибыль: <code>{target_profit_per_100:.2f} ₽</code> на 100 звёзд\n"
         f"• Прибыль на 1 звезду: <code>{target_profit_per_star:.2f} ₽</code>\n"
         f"• Наценка вместо target-profit: <code>{markup_percent:.2f}%</code>\n"
+        f"• Комиссия RollyPay в цене: <code>{rollypay_fee:.2f}%</code>\n"
         f"• Минимальная цена: <code>{min_price:.2f} ₽</code>\n"
         f"• Максимальная цена: <code>{max_price:.2f} ₽</code>\n"
         f"• Fragment username: <code>@{quote_username}</code>\n"
