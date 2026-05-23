@@ -6,6 +6,29 @@ from typing import List, Dict, Any, Optional
 class Repository:
     def __init__(self, db: asyncpg.Pool):
         self.db = db
+        self._vpn_subscriptions_has_legacy_client_columns: Optional[bool] = None
+
+    async def _vpn_subscriptions_uses_legacy_columns(self) -> bool:
+        """Check whether `vpn_subscriptions` still has legacy client fields.
+
+        Some live databases were created with an older schema where
+        `client_uuid/email/inbound_id` live in `vpn_subscriptions` and can be NOT NULL.
+        """
+        if self._vpn_subscriptions_has_legacy_client_columns is not None:
+            return self._vpn_subscriptions_has_legacy_client_columns
+
+        exists = await self.db.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = 'vpn_subscriptions'
+                  AND column_name = 'client_uuid'
+            )
+            """
+        )
+        self._vpn_subscriptions_has_legacy_client_columns = bool(exists)
+        return self._vpn_subscriptions_has_legacy_client_columns
 
     # --- User Methods ---
     async def get_or_create_user(self, telegram_id: int, username: str, first_name: str = None, last_name: str = None, referrer_id: int = None) -> asyncpg.Record:
@@ -245,14 +268,25 @@ class Repository:
         """Создать запись о новой VPN подписке пользователя."""
         async with self.db.transaction():
             # create subscription
-            sub = await self.db.fetchrow(
-                """
-                INSERT INTO vpn_subscriptions (user_id, tariff_name, total_gb, expires_at)
-                VALUES ($1, $2, $3, $4)
-                RETURNING *
-                """,
-                user_id, target_tariff_name, total_gb, expires_at
-            )
+            if await self._vpn_subscriptions_uses_legacy_columns():
+                # Backward-compatible insert for legacy schemas.
+                sub = await self.db.fetchrow(
+                    """
+                    INSERT INTO vpn_subscriptions (user_id, client_uuid, email, inbound_id, tariff_name, total_gb, expires_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    RETURNING *
+                    """,
+                    user_id, client_uuid, email, inbound_id, target_tariff_name, total_gb, expires_at
+                )
+            else:
+                sub = await self.db.fetchrow(
+                    """
+                    INSERT INTO vpn_subscriptions (user_id, tariff_name, total_gb, expires_at)
+                    VALUES ($1, $2, $3, $4)
+                    RETURNING *
+                    """,
+                    user_id, target_tariff_name, total_gb, expires_at
+                )
             # create client entry linked to subscription
             client = await self.db.fetchrow(
                 """
