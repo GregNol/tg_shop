@@ -14,8 +14,39 @@ async def get_premium_prices(repo: Repository):
     return [float(prices_db.get(f'premium_price_{i}', plan['price'])) for i, plan in enumerate(PREMIUM_PLANS)]
 
 @router.callback_query(F.data == "admin_prices")
-async def admin_prices_menu(call: types.CallbackQuery):
-    await call.message.edit_text(text="<b>📈 Управление ценами</b>", reply_markup=get_prices_menu_kb())
+async def admin_prices_menu(call: types.CallbackQuery, repo: Repository):
+    star_price_mode = (await repo.get_setting('star_price_mode') or 'static').strip().lower()
+    star_cost_ton_mode = (await repo.get_setting('star_cost_ton_mode') or 'static').strip().lower()
+    dynamic_enabled = star_price_mode == 'dynamic' and star_cost_ton_mode == 'dynamic'
+    mode_text = 'Вкл' if dynamic_enabled else 'Выкл'
+
+    kb = get_prices_menu_kb(
+        dynamic_button_text=f"🔄 Динамическая цена: {mode_text}",
+        dynamic_button_callback="toggle_star_dynamic_price"
+    )
+    await call.message.edit_text(
+        text=(
+            "<b>📈 Управление ценами</b>\n\n"
+            f"⭐ Динамический режим: <b>{'включен' if dynamic_enabled else 'выключен'}</b>\n"
+            f"• Цена за звезду: <code>{star_price_mode}</code>\n"
+            f"• Себестоимость TON: <code>{star_cost_ton_mode}</code>"
+        ),
+        reply_markup=kb
+    )
+
+
+@router.callback_query(F.data == "toggle_star_dynamic_price")
+async def toggle_star_dynamic_price(call: types.CallbackQuery, repo: Repository):
+    star_price_mode = (await repo.get_setting('star_price_mode') or 'static').strip().lower()
+    star_cost_ton_mode = (await repo.get_setting('star_cost_ton_mode') or 'static').strip().lower()
+    enable_dynamic = not (star_price_mode == 'dynamic' and star_cost_ton_mode == 'dynamic')
+    new_value = 'dynamic' if enable_dynamic else 'static'
+
+    await repo.update_setting('star_price_mode', new_value)
+    await repo.update_setting('star_cost_ton_mode', new_value)
+
+    await call.answer(f"Динамическая цена {'включена' if enable_dynamic else 'выключена'}", show_alert=True)
+    await admin_prices_menu(call, repo)
 
 @router.callback_query(F.data == "price_stars")
 async def price_stars_show(call: types.CallbackQuery, state: FSMContext, repo: Repository):
