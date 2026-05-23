@@ -22,6 +22,7 @@ async def vpn_menu_callback(call: types.CallbackQuery, repo: Repository, config:
     subs = await repo.get_user_vpn_subscriptions(user_id)
     has_subs = len(subs) > 0
     vpn_price = float(await repo.get_setting('vpn_standard_price') or 100)
+    premium_price = int(await repo.get_setting('vpn_premium_price') or 400)
 
     if has_subs:
         xui = xui_from_config(config)
@@ -40,13 +41,13 @@ async def vpn_menu_callback(call: types.CallbackQuery, repo: Repository, config:
         await safe_delete_and_send_photo(
             call, config, config.visuals.img_url_main,
             text,
-            user_kb.get_vpn_menu_kb(has_subs, vpn_price)
+            user_kb.get_vpn_menu_kb(has_subs, vpn_price, premium_price)
         )
     else:
         await safe_delete_and_send_photo(
             call, config, config.visuals.img_url_main,
             "<b>🔐 ВПН Сервис</b>\n\nУ вас еще нет подписки. Купите её для безопасного доступа к сети:",
-            user_kb.get_vpn_menu_kb(has_subs, vpn_price)
+            user_kb.get_vpn_menu_kb(has_subs, vpn_price, premium_price)
         )
 
 @router.callback_query(F.data == "buy_vpn_plan_standard_1")
