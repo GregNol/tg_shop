@@ -95,7 +95,7 @@ async def buy_stars_self_pack_selected(call: types.CallbackQuery, state: FSMCont
     await state.set_state(BuyStarsConfirmStates.waiting_for_confirm)
 
 @router.callback_query(BuyStarsConfirmStates.waiting_for_confirm, F.data == "buy_stars_self_confirm")
-async def buy_stars_self_confirm_callback(call: types.CallbackQuery, state: FSMContext, repo: Repository, fragment_sender: FragmentSender):
+async def buy_stars_self_confirm_callback(call: types.CallbackQuery, state: FSMContext, repo: Repository, fragment_sender: FragmentSender, config: Config):
     if not call.from_user.username:
         await call.answer("У вас нету логина в тг, установите его и попробуйте еще раз", show_alert=True)
         await state.clear()
@@ -250,7 +250,7 @@ async def process_gift_amount(message: types.Message, state: FSMContext, repo: R
     await state.set_state(BuyStarsConfirmStates.waiting_for_gift_confirm)
 
 @router.callback_query(BuyStarsConfirmStates.waiting_for_gift_confirm, F.data == "buy_stars_gift_confirm")
-async def buy_stars_gift_confirm_callback(call: types.CallbackQuery, state: FSMContext, repo: Repository, fragment_sender: FragmentSender):
+async def buy_stars_gift_confirm_callback(call: types.CallbackQuery, state: FSMContext, repo: Repository, fragment_sender: FragmentSender, config: Config):
     data = await state.get_data()
     amount, total, recipient = data.get("amount"), data.get("total"), data.get("recipient")
     user_obj = call.from_user
