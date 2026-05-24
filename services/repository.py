@@ -133,12 +133,13 @@ class Repository:
         return dict(row) if row else None
         
     async def process_successful_payment(self, invoice_id: str) -> Optional[Dict[str, Any]]:
-        async with self.db.transaction():
-            payment = await self.db.fetchrow("SELECT * FROM payments WHERE invoice_id = $1 AND status = 'pending'", invoice_id)
-            if not payment:
-                return None
-            await self.db.execute("UPDATE payments SET status = 'paid' WHERE invoice_id = $1", invoice_id)
-            await self.db.execute("UPDATE users SET balance = balance + $1 WHERE telegram_id = $2", float(payment["amount"]), payment["user_id"])
+        async with self.db.acquire() as conn:
+            async with conn.transaction():
+                payment = await conn.fetchrow("SELECT * FROM payments WHERE invoice_id = $1 AND status = 'pending'", invoice_id)
+                if not payment:
+                    return None
+                await conn.execute("UPDATE payments SET status = 'paid' WHERE invoice_id = $1", invoice_id)
+                await conn.execute("UPDATE users SET balance = balance + $1 WHERE telegram_id = $2", float(payment["amount"]), payment["user_id"])
         return dict(payment)
 
     async def process_referral_reward(self, user_id: int, amount: float, percentage: float) -> Optional[tuple[int, float]]:
@@ -267,21 +268,40 @@ class Repository:
     async def create_vpn_subscription(self, user_id: int, client_uuid: str, email: str, inbound_id: int, target_tariff_name: str, total_gb: int, expires_at: Optional[datetime] = None) -> asyncpg.Record:
         """Создать запись о новой VPN подписке пользователя."""
         try:
-            async with self.db.transaction():
+            async with self.db.acquire() as conn:
                 # create subscription with robust fallback for mixed/legacy deployments
                 sub = None
                 use_legacy_insert = await self._vpn_subscriptions_uses_legacy_columns()
 
                 if not use_legacy_insert:
                     try:
-                        sub = await self.db.fetchrow(
-                            """
-                            INSERT INTO vpn_subscriptions (user_id, tariff_name, total_gb, expires_at)
-                            VALUES ($1, $2, $3, $4)
-                            RETURNING *
-                            """,
-                            user_id, target_tariff_name, total_gb, expires_at
-                        )
+                        async with conn.transaction():
+                            sub = await conn.fetchrow(
+                                """
+                                INSERT INTO vpn_subscriptions (user_id, tariff_name, total_gb, expires_at)
+                                VALUES ($1, $2, $3, $4)
+                                RETURNING *
+                                """,
+                                user_id, target_tariff_name, total_gb, expires_at
+                            )
+
+                            # create client entry linked to subscription
+                            client = await conn.fetchrow(
+                                """
+                                INSERT INTO vpn_subscription_clients (subscription_id, client_uuid, email, inbound_id, panel, total_gb)
+                                VALUES ($1, $2, $3, $4, $5, $6)
+                                ON CONFLICT (client_uuid)
+                                DO UPDATE SET
+                                    subscription_id = EXCLUDED.subscription_id,
+                                    email = EXCLUDED.email,
+                                    inbound_id = EXCLUDED.inbound_id,
+                                    panel = EXCLUDED.panel,
+                                    total_gb = EXCLUDED.total_gb,
+                                    is_active = 1
+                                RETURNING *
+                                """,
+                                sub['id'], client_uuid, email, inbound_id, 'primary', total_gb
+                            )
                     except asyncpg.NotNullViolationError as e:
                         # Some live DBs still require legacy columns even if detection misses them.
                         if 'client_uuid' in str(e) or 'email' in str(e) or 'inbound_id' in str(e):
@@ -300,41 +320,43 @@ class Repository:
                             raise
 
                 if sub is None and use_legacy_insert:
-                    sub = await self.db.fetchrow(
-                        """
-                        INSERT INTO vpn_subscriptions (user_id, client_uuid, email, inbound_id, tariff_name, total_gb, expires_at)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7)
-                        ON CONFLICT (email)
-                        DO UPDATE SET
-                            user_id = EXCLUDED.user_id,
-                            client_uuid = EXCLUDED.client_uuid,
-                            inbound_id = EXCLUDED.inbound_id,
-                            tariff_name = EXCLUDED.tariff_name,
-                            total_gb = EXCLUDED.total_gb,
-                            expires_at = EXCLUDED.expires_at,
-                            is_active = 1
-                        RETURNING *
-                        """,
-                        user_id, client_uuid, email, inbound_id, target_tariff_name, total_gb, expires_at
-                    )
+                    async with conn.transaction():
+                        sub = await conn.fetchrow(
+                            """
+                            INSERT INTO vpn_subscriptions (user_id, client_uuid, email, inbound_id, tariff_name, total_gb, expires_at)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7)
+                            ON CONFLICT (email)
+                            DO UPDATE SET
+                                user_id = EXCLUDED.user_id,
+                                client_uuid = EXCLUDED.client_uuid,
+                                inbound_id = EXCLUDED.inbound_id,
+                                tariff_name = EXCLUDED.tariff_name,
+                                total_gb = EXCLUDED.total_gb,
+                                expires_at = EXCLUDED.expires_at,
+                                is_active = 1
+                            RETURNING *
+                            """,
+                            user_id, client_uuid, email, inbound_id, target_tariff_name, total_gb, expires_at
+                        )
 
-                # create client entry linked to subscription
-                client = await self.db.fetchrow(
-                    """
-                    INSERT INTO vpn_subscription_clients (subscription_id, client_uuid, email, inbound_id, panel, total_gb)
-                    VALUES ($1, $2, $3, $4, $5, $6)
-                    ON CONFLICT (client_uuid)
-                    DO UPDATE SET
-                        subscription_id = EXCLUDED.subscription_id,
-                        email = EXCLUDED.email,
-                        inbound_id = EXCLUDED.inbound_id,
-                        panel = EXCLUDED.panel,
-                        total_gb = EXCLUDED.total_gb,
-                        is_active = 1
-                    RETURNING *
-                    """,
-                    sub['id'], client_uuid, email, inbound_id, 'primary', total_gb
-                )
+                        # create client entry linked to subscription
+                        client = await conn.fetchrow(
+                            """
+                            INSERT INTO vpn_subscription_clients (subscription_id, client_uuid, email, inbound_id, panel, total_gb)
+                            VALUES ($1, $2, $3, $4, $5, $6)
+                            ON CONFLICT (client_uuid)
+                            DO UPDATE SET
+                                subscription_id = EXCLUDED.subscription_id,
+                                email = EXCLUDED.email,
+                                inbound_id = EXCLUDED.inbound_id,
+                                panel = EXCLUDED.panel,
+                                total_gb = EXCLUDED.total_gb,
+                                is_active = 1
+                            RETURNING *
+                            """,
+                            sub['id'], client_uuid, email, inbound_id, 'primary', total_gb
+                        )
+
                 logging.info(f"Created vpn subscription {sub['id']} and primary client {client_uuid} for user {user_id}")
                 # return a combined dict similar to legacy vpn_subscriptions row
                 return {
@@ -394,41 +416,44 @@ class Repository:
 
     async def extend_vpn_subscription(self, client_uuid: str, new_expires_at: Optional[datetime] = None, added_gb: int = 0):
         """Продлить подписку: обновить expires_at у subscription и добавить трафик конкретному клиенту."""
-        async with self.db.transaction():
-            # find client and subscription
-            row = await self.db.fetchrow("SELECT subscription_id FROM vpn_subscription_clients WHERE client_uuid = $1", client_uuid)
-            if not row:
-                return
-            sub_id = row['subscription_id']
-            await self.db.execute("UPDATE vpn_subscriptions SET expires_at = COALESCE($1, expires_at) WHERE id = $2", new_expires_at, sub_id)
-            if added_gb:
-                await self.db.execute("UPDATE vpn_subscription_clients SET total_gb = total_gb + $1 WHERE client_uuid = $2", added_gb, client_uuid)
-            await self.db.execute("UPDATE vpn_subscription_clients SET is_active = 1 WHERE client_uuid = $1", client_uuid)
+        async with self.db.acquire() as conn:
+            async with conn.transaction():
+                # find client and subscription
+                row = await conn.fetchrow("SELECT subscription_id FROM vpn_subscription_clients WHERE client_uuid = $1", client_uuid)
+                if not row:
+                    return
+                sub_id = row['subscription_id']
+                await conn.execute("UPDATE vpn_subscriptions SET expires_at = COALESCE($1, expires_at) WHERE id = $2", new_expires_at, sub_id)
+                if added_gb:
+                    await conn.execute("UPDATE vpn_subscription_clients SET total_gb = total_gb + $1 WHERE client_uuid = $2", added_gb, client_uuid)
+                await conn.execute("UPDATE vpn_subscription_clients SET is_active = 1 WHERE client_uuid = $1", client_uuid)
 
     async def change_vpn_subscription_tariff(self, client_uuid: str, new_tariff_name: str, new_total_gb: Optional[int] = None, new_expires_at: Optional[datetime] = None):
         """Сменить тариф подписки: обновить subscription.tariff_name и при необходимости client.total_gb/expires_at."""
-        async with self.db.transaction():
-            row = await self.db.fetchrow("SELECT subscription_id FROM vpn_subscription_clients WHERE client_uuid = $1", client_uuid)
-            if not row:
-                return
-            sub_id = row['subscription_id']
-            await self.db.execute("UPDATE vpn_subscriptions SET tariff_name = $1 WHERE id = $2", new_tariff_name, sub_id)
-            if new_total_gb is not None:
-                await self.db.execute("UPDATE vpn_subscription_clients SET total_gb = $1 WHERE client_uuid = $2", new_total_gb, client_uuid)
-            if new_expires_at is not None:
-                await self.db.execute("UPDATE vpn_subscriptions SET expires_at = $1 WHERE id = $2", new_expires_at, sub_id)
+        async with self.db.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow("SELECT subscription_id FROM vpn_subscription_clients WHERE client_uuid = $1", client_uuid)
+                if not row:
+                    return
+                sub_id = row['subscription_id']
+                await conn.execute("UPDATE vpn_subscriptions SET tariff_name = $1 WHERE id = $2", new_tariff_name, sub_id)
+                if new_total_gb is not None:
+                    await conn.execute("UPDATE vpn_subscription_clients SET total_gb = $1 WHERE client_uuid = $2", new_total_gb, client_uuid)
+                if new_expires_at is not None:
+                    await conn.execute("UPDATE vpn_subscriptions SET expires_at = $1 WHERE id = $2", new_expires_at, sub_id)
 
     async def delete_vpn_subscription(self, client_uuid: str):
         """Удалить подписку целиком по UUID клиента."""
-        async with self.db.transaction():
-            row = await self.db.fetchrow(
-                "SELECT subscription_id FROM vpn_subscription_clients WHERE client_uuid = $1",
-                client_uuid,
-            )
-            if not row:
-                return
-            sub_id = row['subscription_id']
-            await self.db.execute("DELETE FROM vpn_subscriptions WHERE id = $1", sub_id)
+        async with self.db.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    "SELECT subscription_id FROM vpn_subscription_clients WHERE client_uuid = $1",
+                    client_uuid,
+                )
+                if not row:
+                    return
+                sub_id = row['subscription_id']
+                await conn.execute("DELETE FROM vpn_subscriptions WHERE id = $1", sub_id)
 
     async def create_vpn_subscription_client(self, subscription_id: int, client_uuid: str, email: str, inbound_id: int, panel: str = 'secondary', total_gb: int = 0) -> asyncpg.Record:
         """Добавить client запись к существующей подписке."""
