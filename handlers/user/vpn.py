@@ -652,7 +652,8 @@ async def buy_vpn_gb_callback(call: types.CallbackQuery, repo: Repository, confi
 
     # clear low_gb notification for subscription
     try:
-        await repo.db.execute("DELETE FROM vpn_expiry_notifications WHERE subscription_id = $1 AND notify_when = $2", client['subscription_id'], 'low_gb')
+        low_gb_key = f"low_gb:{client_uuid}"
+        await repo.db.execute("DELETE FROM vpn_expiry_notifications WHERE subscription_id = $1 AND notify_when = $2", client['subscription_id'], low_gb_key)
     except Exception:
         logging.exception("Failed to clear low_gb notification record")
 

@@ -178,7 +178,7 @@ async def show_purchase_history(call: types.CallbackQuery, callback_data: Purcha
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     kb_rows = []
     # filters
-    filter_opts = [('all','Все'), ('vpn','VPN'), ('vpn_autotopup','Автодокупка'), ('vpn_gb','Докупка GB'), ('vpn_premium','Premium'), ('stars','Stars')]
+    filter_opts = [('all','Все'), ('vpn','VPN'), ('vpn_autorenew','Автопродление'), ('vpn_autotopup','Автодокупка'), ('vpn_gb','Докупка GB'), ('vpn_premium','Premium'), ('stars','Stars')]
     filter_buttons = [InlineKeyboardButton(text=label, callback_data=PurchaseHistoryCallback(page=1, ptype=code).pack()) for code,label in filter_opts]
     # arrange filter buttons in two rows
     kb_rows.append(filter_buttons[:3])

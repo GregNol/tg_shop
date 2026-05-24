@@ -31,6 +31,31 @@ NOTIFY_TEXTS = {
     '12h': 'Ваша подписка ВПН истекает через 12 часов. Продлите, чтобы не потерять доступ.'
 }
 
+AUTO_RENEW_DAYS = 30
+EXPIRY_REMINDER_KEYS = ('3d', '2d', '1d', '12h')
+
+
+def _is_premium_tariff(tariff_name: str | None) -> bool:
+    normalized = (tariff_name or '').lower()
+    return 'прем' in normalized or 'premium' in normalized
+
+
+def _renewal_price_for_tariff(tariff_name: str | None, standard_price: float, premium_price: float) -> tuple[float, str]:
+    if _is_premium_tariff(tariff_name):
+        return premium_price, 'Premium+'
+    return standard_price, 'Стандартный'
+
+
+async def _clear_subscription_notifications(pool, subscription_id: int):
+    await pool.execute(
+        "DELETE FROM vpn_expiry_notifications WHERE subscription_id = $1 AND notify_when IN ('3d', '2d', '1d', '12h')",
+        subscription_id,
+    )
+
+
+def _low_gb_notification_key(client_uuid: str) -> str:
+    return f"low_gb:{client_uuid}"
+
 async def run():
     config = load_config()
     database_url = config.database_url
@@ -39,6 +64,10 @@ async def run():
     pool = await asyncpg.create_pool(database_url)
     repo = Repository(pool)
     bot = Bot(token=bot_token)
+    fragment_sender = FragmentSender(config, bot)
+
+    standard_price = float((await repo.get_setting('vpn_standard_price') or '100'))
+    premium_price = float((await repo.get_setting('vpn_premium_price') or '400'))
 
     now = datetime.utcnow()
     # look for subscriptions that expire within next 3 days
@@ -58,6 +87,150 @@ async def run():
                 exists = await pool.fetchval("SELECT 1 FROM vpn_expiry_notifications WHERE subscription_id = $1 AND notify_when = $2", sub_id, key)
                 if exists:
                     continue
+
+                renewal_price, tariff_label = _renewal_price_for_tariff(row['tariff_name'], standard_price, premium_price)
+                current_expiry = expires_at
+                new_expiry = current_expiry + timedelta(days=AUTO_RENEW_DAYS)
+                new_expiry_ms = int(new_expiry.timestamp() * 1000)
+
+                clients = []
+                try:
+                    async with pool.acquire() as conn:
+                        async with conn.transaction():
+                            locked_sub = await conn.fetchrow(
+                                "SELECT id, user_id, expires_at, tariff_name FROM vpn_subscriptions WHERE id = $1 FOR UPDATE",
+                                sub_id,
+                            )
+                            if not locked_sub:
+                                continue
+
+                            locked_expiry = locked_sub['expires_at']
+                            if not locked_expiry or locked_expiry <= now:
+                                continue
+
+                            if locked_expiry != expires_at:
+                                continue
+
+                            current_expiry = locked_expiry
+                            old_expiry_ms = int(current_expiry.timestamp() * 1000)
+                            renewal_key = f"autorenew:{old_expiry_ms}"
+
+                            renewal_exists = await conn.fetchval(
+                                "SELECT 1 FROM vpn_expiry_notifications WHERE subscription_id = $1 AND notify_when = $2",
+                                sub_id,
+                                renewal_key,
+                            )
+                            if renewal_exists:
+                                continue
+
+                            user_row = await conn.fetchrow("SELECT balance FROM users WHERE telegram_id = $1 FOR UPDATE", user_id)
+                            user_balance_val = float(user_row['balance']) if user_row and user_row['balance'] is not None else 0.0
+                            if user_balance_val < renewal_price:
+                                raise RuntimeError("insufficient_funds")
+
+                            clients = await conn.fetch(
+                                "SELECT client_uuid, email, inbound_id, panel, total_gb FROM vpn_subscription_clients WHERE subscription_id = $1 ORDER BY created_at ASC",
+                                sub_id,
+                            )
+
+                            await conn.execute(
+                                "INSERT INTO vpn_expiry_notifications (subscription_id, notify_when) VALUES ($1, $2)",
+                                sub_id,
+                                renewal_key,
+                            )
+                            await conn.execute("UPDATE users SET balance = balance - $1 WHERE telegram_id = $2", renewal_price, user_id)
+                            await conn.execute("UPDATE vpn_subscriptions SET expires_at = $1 WHERE id = $2", new_expiry, sub_id)
+
+                    updated_clients = []
+                    try:
+                        for client in clients:
+                            panel = client['panel'] or 'primary'
+                            xui = xui_from_config(config, secondary=(panel == 'secondary'))
+                            await xui.login()
+                            try:
+                                success = await xui.update_client(
+                                    inbound_id=client['inbound_id'],
+                                    client_uuid=client['client_uuid'],
+                                    email=client['email'],
+                                    enable=True,
+                                    expire_time=new_expiry_ms,
+                                )
+                            finally:
+                                await xui.close()
+
+                            if not success:
+                                raise RuntimeError(f"xui_update_failed:{client['client_uuid']}")
+                            updated_clients.append(client)
+                    except Exception as e:
+                        logging.exception(f"XUI renewal update failed for subscription {sub_id}: {e}")
+                        for client in updated_clients:
+                            try:
+                                panel = client['panel'] or 'primary'
+                                xui = xui_from_config(config, secondary=(panel == 'secondary'))
+                                await xui.login()
+                                try:
+                                    await xui.update_client(
+                                        inbound_id=client['inbound_id'],
+                                        client_uuid=client['client_uuid'],
+                                        email=client['email'],
+                                        enable=True,
+                                        expire_time=old_expiry_ms,
+                                    )
+                                finally:
+                                    await xui.close()
+                            except Exception:
+                                logging.exception("Failed to rollback XUI renewal for client %s", client['client_uuid'])
+
+                        async with pool.acquire() as conn:
+                            async with conn.transaction():
+                                await conn.execute("UPDATE users SET balance = balance + $1 WHERE telegram_id = $2", renewal_price, user_id)
+                                await conn.execute("UPDATE vpn_subscriptions SET expires_at = $1 WHERE id = $2", current_expiry, sub_id)
+                                await conn.execute("DELETE FROM vpn_expiry_notifications WHERE subscription_id = $1 AND notify_when = $2", sub_id, renewal_key)
+
+                        await fragment_sender._notify_admins(
+                            f"❌ Автопродление VPN не применено для user={user_id}, sub={sub_id}, tariff={tariff_label}: {e}"
+                        )
+                        continue
+
+                    await _clear_subscription_notifications(pool, sub_id)
+
+                    try:
+                        await repo.add_purchase_to_history(
+                            user_id,
+                            'vpn_autorenew',
+                            f'Autorenew {tariff_label} sub={sub_id} to {new_expiry.strftime("%Y-%m-%d %H:%M")}',
+                            AUTO_RENEW_DAYS,
+                            renewal_price,
+                            0.0,
+                        )
+                    except Exception:
+                        logging.exception("Failed to write autorenew history for user %s", user_id)
+
+                    try:
+                        await bot.send_message(
+                            user_id,
+                            f"✅ Автопродление подписки выполнено. Тариф: {tariff_label}. Новая дата окончания: {new_expiry.strftime('%Y-%m-%d %H:%M')}. Списано {renewal_price:.2f}₽."
+                        )
+                    except Exception:
+                        logging.exception(f"Failed to notify user {user_id} about auto-renew success")
+
+                    try:
+                        await fragment_sender._notify_admins(
+                            f"🔁 Автопродление VPN для @{user_id}: тариф {tariff_label}, списано {renewal_price:.2f}₽, до {new_expiry.strftime('%Y-%m-%d %H:%M')}"
+                        )
+                    except Exception:
+                        logging.exception("Failed to notify admins about auto-renew")
+
+                    logging.info("Auto-renew: user %s subscription %s tariff=%s charged %.2f", user_id, sub_id, tariff_label, renewal_price)
+                    continue
+                except RuntimeError as re:
+                    if str(re) == 'insufficient_funds':
+                        pass
+                    else:
+                        logging.exception(f"Auto-renew runtime error for user {user_id}, sub {sub_id}: {re}")
+                except Exception as e:
+                    logging.exception(f"Auto-renew transaction failed for user {user_id}, subscription {sub_id}: {e}")
+
                 # send message with extend button when appropriate
                 text = NOTIFY_TEXTS.get(key, f"Ваша подписка ВПН истекает через {key}.")
                 # choose callback: for standard tariff, offer direct extend; otherwise open vpn menu
@@ -87,14 +260,13 @@ async def run():
     auto_enabled = (await repo.get_setting('vpn_auto_topup_enabled') or '0').strip() == '1'
     auto_gb = int((await repo.get_setting('vpn_auto_topup_gb') or '1'))
     auto_price = float((await repo.get_setting('vpn_auto_topup_price_per_gb') or '3'))
-    fragment_sender = FragmentSender(config, bot)
-
     for r in low_rows:
         sub_id = r['subscription_id']
         user_id = r['user_id']
         client_uuid = r['client_uuid']
         total_gb = r['total_gb']
-        exists = await pool.fetchval("SELECT 1 FROM vpn_expiry_notifications WHERE subscription_id = $1 AND notify_when = $2", sub_id, 'low_gb')
+        low_gb_key = _low_gb_notification_key(client_uuid)
+        exists = await pool.fetchval("SELECT 1 FROM vpn_expiry_notifications WHERE subscription_id = $1 AND notify_when = $2", sub_id, low_gb_key)
         if exists:
             continue
         # try auto-topup if enabled and user has funds
@@ -105,7 +277,7 @@ async def run():
                 async with pool.acquire() as conn:
                     async with conn.transaction():
                         # re-check low_gb notification to avoid races
-                        exists = await conn.fetchval("SELECT 1 FROM vpn_expiry_notifications WHERE subscription_id = $1 AND notify_when = $2", sub_id, 'low_gb')
+                        exists = await conn.fetchval("SELECT 1 FROM vpn_expiry_notifications WHERE subscription_id = $1 AND notify_when = $2", sub_id, low_gb_key)
                         if exists:
                             raise RuntimeError("already_notified")
 
@@ -120,7 +292,7 @@ async def run():
                         # deduct balance and increment client GB, mark notification (all in tx)
                         await conn.execute("UPDATE users SET balance = balance - $1 WHERE telegram_id = $2", cost, user_id)
                         await conn.execute("UPDATE vpn_subscription_clients SET total_gb = total_gb + $1 WHERE client_uuid = $2", auto_gb, client_uuid)
-                        await conn.execute("INSERT INTO vpn_expiry_notifications (subscription_id, notify_when) VALUES ($1, $2)", sub_id, 'low_gb')
+                        await conn.execute("INSERT INTO vpn_expiry_notifications (subscription_id, notify_when) VALUES ($1, $2)", sub_id, low_gb_key)
 
                         # capture values for external update after commit
                         inbound_id = client_row['inbound_id'] if client_row else None
@@ -143,7 +315,7 @@ async def run():
                             async with conn.transaction():
                                 await conn.execute("UPDATE users SET balance = balance + $1 WHERE telegram_id = $2", cost, user_id)
                                 await conn.execute("UPDATE vpn_subscription_clients SET total_gb = GREATEST(total_gb - $1, 0) WHERE client_uuid = $2", auto_gb, client_uuid)
-                                await conn.execute("DELETE FROM vpn_expiry_notifications WHERE subscription_id = $1 AND notify_when = $2", sub_id, 'low_gb')
+                                await conn.execute("DELETE FROM vpn_expiry_notifications WHERE subscription_id = $1 AND notify_when = $2", sub_id, low_gb_key)
                     except Exception:
                         logging.exception("Failed to rollback DB after XUI failure for auto-topup")
                     # notify admins about failure
@@ -190,7 +362,7 @@ async def run():
         ])
         try:
             await bot.send_message(user_id, text, reply_markup=kb)
-            await pool.execute("INSERT INTO vpn_expiry_notifications (subscription_id, notify_when) VALUES ($1, $2)", sub_id, 'low_gb')
+            await pool.execute("INSERT INTO vpn_expiry_notifications (subscription_id, notify_when) VALUES ($1, $2)", sub_id, low_gb_key)
             logging.info(f"Notified user {user_id} about low GB for subscription {sub_id}")
         except Exception as e:
             logging.exception(f"Failed to notify user {user_id} about low GB for subscription {sub_id}: {e}")
