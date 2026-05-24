@@ -175,4 +175,4 @@ async def init_db(database_url: str, support_contact: str = ''):
         await conn.close()
 
 async def get_db_connection(database_url: str):
-    return await asyncpg.connect(database_url)
+    return await asyncpg.create_pool(database_url)

@@ -75,8 +75,8 @@ async def start_bot():
     
     enabled_payment_systems = check_payment_systems(config)
 
-    db_pool = await get_db_connection(config.database_url)
     await init_db(config.database_url, config.bot.support_contact)
+    db_pool = await get_db_connection(config.database_url)
     
     repo = Repository(db_pool)
     fragment_sender = FragmentSender(config, bot)
