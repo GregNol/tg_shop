@@ -248,12 +248,12 @@ async def run():
                 except Exception as e:
                     logging.exception(f"Failed to notify user {user_id} for subscription {sub_id}: {e}")
 
-    # Notify about low traffic (<10GB) per client
+    # Notify about low traffic (<10GB) per client; total_gb=0 means unlimited
     low_rows = await pool.fetch("""
         SELECT c.subscription_id, s.user_id, c.client_uuid, c.total_gb, c.panel, c.email, c.inbound_id
         FROM vpn_subscription_clients c
         JOIN vpn_subscriptions s ON s.id = c.subscription_id
-        WHERE c.total_gb < 10 AND c.is_active = 1 AND (s.expires_at IS NULL OR s.expires_at > $1)
+        WHERE c.total_gb > 0 AND c.total_gb < 10 AND c.is_active = 1 AND (s.expires_at IS NULL OR s.expires_at > $1)
     """, now)
 
     # load auto-topup settings

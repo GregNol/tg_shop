@@ -44,6 +44,17 @@ def _pick_primary_client(clients):
     return next((client for client in clients if client.get('panel') == 'primary'), clients[0]) if clients else None
 
 
+def _format_traffic_limit(total_gb) -> str:
+    value = int(total_gb or 0)
+    return 'Безлимит' if value == 0 else f'{value} ГБ'
+
+
+def _format_expiry(expires_at) -> str:
+    if not expires_at:
+        return 'Бессрочно'
+    return expires_at.strftime('%Y-%m-%d %H:%M')
+
+
 def _build_vpn_tariff_choice_kb(target_user_id: int) -> types.InlineKeyboardMarkup:
     return types.InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -565,8 +576,14 @@ async def admin_show_vpn_clients(call: types.CallbackQuery, state: FSMContext, r
     text_lines = [f"🔐 VPN клиенты пользователя <code>{target_user_id}</code>:\n"]
     kb_rows = []
     for c in clients:
-        created = c['created_at'].strftime('%Y-%m-%d %H:%M') if c.get('created_at') else '-'
-        text_lines.append(f"• {c['panel'].capitalize()} | UUID: <code>{c['client_uuid']}</code> | email: <code>{c['email']}</code> | inbound: {c['inbound_id']} | GB: {c['total_gb']} | exp: {c['expires_at'] or '-'}")
+        traffic_text = _format_traffic_limit(c.get('total_gb'))
+        expiry_text = _format_expiry(c.get('expires_at'))
+        panel_name = 'Основная' if c.get('panel') == 'primary' else 'Вторая' if c.get('panel') == 'secondary' else c.get('panel', '-').capitalize()
+        text_lines.append(
+            f"• Панель: {panel_name} | UUID: <code>{c['client_uuid']}</code>\n"
+            f"  Email: <code>{c['email']}</code> | Inbound: {c['inbound_id']}\n"
+            f"  Трафик: {traffic_text} | Истекает: {expiry_text}"
+        )
         # action buttons per client
         kb_rows.append([
             types.InlineKeyboardButton(text="Продлить", callback_data=AdminVPNCallback(action="extend", client_uuid=c['client_uuid']).pack()),
