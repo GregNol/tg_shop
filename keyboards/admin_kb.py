@@ -50,14 +50,10 @@ def get_user_info_kb(is_blocked: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💰 Выдать баланс", callback_data="admin_give_balance"), InlineKeyboardButton(text="💳 Списать баланс", callback_data="admin_take_balance")],
         [InlineKeyboardButton(text="🔐 Выдать ВПН", callback_data="admin_give_vpn")],
+        [InlineKeyboardButton(text="➕ Трафик VPN", callback_data="admin_user_vpn_add_gb"), InlineKeyboardButton(text="🗑 Удалить VPN", callback_data="admin_user_vpn_revoke")],
         [InlineKeyboardButton(text="🔐 VPN клиенты", callback_data="admin_vpn_clients")],
         [InlineKeyboardButton(text=block_btn_text, callback_data="admin_toggle_block"), InlineKeyboardButton(text="💸 Платежи", callback_data=UserPaymentsCallback(page=1).pack())],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_users")]
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💰 Выдать баланс", callback_data="admin_give_balance"), InlineKeyboardButton(text="💸 Отнять баланс", callback_data="admin_take_balance")],
-        [InlineKeyboardButton(text="🧾 Чеки", callback_data=UserPaymentsCallback(page=1).pack()), InlineKeyboardButton(text=block_btn_text, callback_data="admin_toggle_block")],
-        [InlineKeyboardButton(text="⬅️ Назад в админку", callback_data="admin_panel")]
     ])
 
 def get_user_payments_kb(page: int, max_page: int, target_user_id: int) -> InlineKeyboardMarkup:

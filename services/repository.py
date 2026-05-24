@@ -419,9 +419,16 @@ class Repository:
                 await self.db.execute("UPDATE vpn_subscriptions SET expires_at = $1 WHERE id = $2", new_expires_at, sub_id)
 
     async def delete_vpn_subscription(self, client_uuid: str):
-        """Удалить клиентскую запись подписки (и каскадно, если нужно, subscription)."""
-        # delete client row
-        await self.db.execute("DELETE FROM vpn_subscription_clients WHERE client_uuid = $1", client_uuid)
+        """Удалить подписку целиком по UUID клиента."""
+        async with self.db.transaction():
+            row = await self.db.fetchrow(
+                "SELECT subscription_id FROM vpn_subscription_clients WHERE client_uuid = $1",
+                client_uuid,
+            )
+            if not row:
+                return
+            sub_id = row['subscription_id']
+            await self.db.execute("DELETE FROM vpn_subscriptions WHERE id = $1", sub_id)
 
     async def create_vpn_subscription_client(self, subscription_id: int, client_uuid: str, email: str, inbound_id: int, panel: str = 'secondary', total_gb: int = 0) -> asyncpg.Record:
         """Добавить client запись к существующей подписке."""

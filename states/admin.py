@@ -9,6 +9,7 @@ class AdminSettingsStates(StatesGroup):
 class AdminUserManagementStates(StatesGroup):
     waiting_for_user = State()
     user_menu = State()
+    choosing_vpn_tariff = State()
     giving_balance_amount = State()
     giving_balance_confirm = State()
     taking_balance_amount = State()
@@ -16,6 +17,7 @@ class AdminUserManagementStates(StatesGroup):
     giving_vpn_months = State()
     adding_vpn_gb = State()
     extending_vpn_months = State()
+    confirming_vpn_revoke = State()
 
 class PromoStates(StatesGroup):
     menu = State()
