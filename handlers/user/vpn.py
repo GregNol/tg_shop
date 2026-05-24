@@ -53,9 +53,12 @@ def _render_vpn_subscription_blocks(clients, config):
         expiry = primary_client['expires_at'].strftime('%Y-%m-%d %H:%M') if primary_client.get('expires_at') else 'Бессрочно'
 
         lines = [
-            f"Подписка {index}: <b>«{tariff_name}»</b>",
-            f"Статус: {status}",
-            f"Истекает: {expiry}",
+            f"<b>✦ ПРЕМИУМ-ПОДПИСКА #{index}</b>",
+            f"<b>Тариф:</b> «{tariff_name}»",
+            f"<b>Статус:</b> {status}",
+            f"<b>Действует до:</b> <b>{expiry}</b>",
+            f"<b>Конфигов:</b> <b>{len(sorted_group)}</b>",
+            "<b>━━━━━━━━━━━━━━━━━━</b>",
         ]
 
         for client_index, client in enumerate(sorted_group, 1):
@@ -64,8 +67,12 @@ def _render_vpn_subscription_blocks(clients, config):
             remaining_gb = int(client.get('total_gb') or 0)
             panel_name = 'Основная' if client.get('panel') == 'primary' else 'Вторая' if client.get('panel') == 'secondary' else f'Панель {client_index}'
             traffic_text = "Безлимит" if remaining_gb == 0 else f"{remaining_gb} ГБ"
-            lines.append(f"Ссылка {client_index} ({panel_name}): <code>{sub_url}</code>")
-            lines.append(f"Остаток трафика: <b>{traffic_text}</b>")
+            lines.append(f"<b>◆ Конфиг {client_index} · {panel_name}</b>")
+            lines.append(f"<b>Трафик:</b> <b>{traffic_text}</b>")
+            lines.append("<b>Подключение:</b>")
+            lines.append(f"<code>{sub_url}</code>")
+            if client_index < len(sorted_group):
+                lines.append("<b>────────────</b>")
 
         blocks.append("\n".join(lines))
 
@@ -89,7 +96,8 @@ async def vpn_menu_callback(call: types.CallbackQuery, repo: Repository, config:
     premium_price = int(await repo.get_setting('vpn_premium_price') or 400)
 
     if has_subs:
-        text = "<b>🔐 Твоя подписка ВПН:</b>\n\n"
+        text = "<b>👑 VPN PREMIUM CABINET</b>\n"
+        text += "<i>Элегантный доступ к защищенной сети</i>\n\n"
         text += _render_vpn_subscription_blocks(subs, config)
 
         await safe_delete_and_send_photo(
