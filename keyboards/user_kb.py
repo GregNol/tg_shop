@@ -68,13 +68,18 @@ def get_cancel_keyboard() -> InlineKeyboardMarkup:
 def get_main_menu_only_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 В главное меню", callback_data="main_menu")]])
 
-def get_vpn_menu_kb(has_subscriptions: bool, price: float = 100, premium_price: int | None = None) -> InlineKeyboardMarkup:
+def get_vpn_menu_kb(
+    has_subscriptions: bool,
+    price: float = 100,
+    premium_price: int | None = None,
+    show_upgrade: bool = True,
+) -> InlineKeyboardMarkup:
     buttons = []
     if has_subscriptions:
         buttons.append([InlineKeyboardButton(text="📱 Подключить устройство", callback_data="vpn_connect_device")])
         buttons.append([InlineKeyboardButton(text=f"🔄 Продлить (1 мес) - {price}₽", callback_data="buy_vpn_plan_standard_1")])
         # Upgrade to Premium+ option when user already has a subscription
-        if premium_price is not None:
+        if premium_price is not None and show_upgrade:
             buttons.append([InlineKeyboardButton(text="⬆️ Апгрейд до Premium+", callback_data="upgrade_vpn_to_premium")])
     else:
         buttons.append([InlineKeyboardButton(text=f"🛒 Купить VPN (1 мес) - {price}₽", callback_data="buy_vpn_plan_standard_1")])

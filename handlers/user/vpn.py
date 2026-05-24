@@ -16,32 +16,85 @@ from aiogram import Bot
 
 router = Router()
 
+
+def _sort_vpn_clients(clients):
+    panel_order = {
+        'primary': 0,
+        'secondary': 1,
+    }
+    return sorted(
+        clients,
+        key=lambda client: (
+            panel_order.get(client.get('panel') or '', 2),
+            client.get('created_at') or datetime.min,
+        ),
+    )
+
+
+def _group_vpn_clients(clients):
+    grouped = {}
+    order = []
+    for client in clients:
+        subscription_id = client.get('subscription_id')
+        if subscription_id not in grouped:
+            grouped[subscription_id] = []
+            order.append(subscription_id)
+        grouped[subscription_id].append(client)
+    return [grouped[subscription_id] for subscription_id in order]
+
+
+def _render_vpn_subscription_blocks(clients, config):
+    blocks = []
+    for index, group in enumerate(_group_vpn_clients(clients), 1):
+        sorted_group = _sort_vpn_clients(group)
+        primary_client = next((client for client in sorted_group if client.get('panel') == 'primary'), sorted_group[0])
+        tariff_name = primary_client.get('tariff_name') or 'VPN'
+        status = '✅ Активна' if any(int(client.get('is_active') or 0) == 1 for client in sorted_group) else '❌ Выключена'
+        expiry = primary_client['expires_at'].strftime('%Y-%m-%d %H:%M') if primary_client.get('expires_at') else 'Бессрочно'
+
+        lines = [
+            f"Подписка {index}: <b>«{tariff_name}»</b>",
+            f"Статус: {status}",
+            f"Истекает: {expiry}",
+        ]
+
+        for client_index, client in enumerate(sorted_group, 1):
+            xui = xui_from_config(config, secondary=(client.get('panel') == 'secondary'))
+            sub_url = f"{xui.host_url}/sub/{client['client_uuid']}"
+            remaining_gb = int(client.get('total_gb') or 0)
+            panel_name = 'Основная' if client.get('panel') == 'primary' else 'Вторая' if client.get('panel') == 'secondary' else f'Панель {client_index}'
+            lines.append(f"Ссылка {client_index} ({panel_name}): <code>{sub_url}</code>")
+            lines.append(f"Остаток трафика: <b>{remaining_gb} ГБ</b>")
+
+        blocks.append("\n".join(lines))
+
+    return "\n\n".join(blocks)
+
+
+def _has_premium_subscription(clients):
+    for client in clients:
+        tariff_name = (client.get('tariff_name') or '').lower()
+        if 'прем' in tariff_name or 'premium' in tariff_name:
+            return True
+    return False
+
 @router.callback_query(F.data == "vpn_menu")
 async def vpn_menu_callback(call: types.CallbackQuery, repo: Repository, config: Config):
     user_id = call.from_user.id
     subs = await repo.get_user_vpn_subscriptions(user_id)
     has_subs = len(subs) > 0
+    is_premium = _has_premium_subscription(subs)
     vpn_price = float(await repo.get_setting('vpn_standard_price') or 100)
     premium_price = int(await repo.get_setting('vpn_premium_price') or 400)
 
     if has_subs:
-        xui = xui_from_config(config)
-        
         text = "<b>🔐 Твоя подписка ВПН:</b>\n\n"
-        for idx, sub in enumerate(subs, 1):
-            status = "✅ Активна" if sub['is_active'] else "❌ Выключена"
-            expiry = sub['expires_at'].strftime('%Y-%m-%d %H:%M') if sub['expires_at'] else "Бессрочно"
-            sub_url = f"{xui.host_url}/sub/{sub['client_uuid']}"
-            text += f"Тариф: <b>«{sub['tariff_name']}»</b>\n"
-            text += f"Статус: {status}\n"
-            text += f"Истекает: {expiry}\n"
-            text += f"Ссылка: <code>{sub_url}</code>\n\n"
-            break # Пока предполагаем 1 активную подписку
-            
+        text += _render_vpn_subscription_blocks(subs, config)
+
         await safe_delete_and_send_photo(
             call, config, config.visuals.img_url_main,
             text,
-            user_kb.get_vpn_menu_kb(has_subs, vpn_price, premium_price)
+            user_kb.get_vpn_menu_kb(has_subs, vpn_price, premium_price, show_upgrade=not is_premium)
         )
     else:
         await safe_delete_and_send_photo(
@@ -299,13 +352,18 @@ async def buy_vpn_premium_callback(call: types.CallbackQuery, repo: Repository, 
         return
     logging.info(f"Premium+ subscription created for user {call.from_user.id}: primary={client_id_p1}, secondary={client_id_p2}, sub_id={sub['subscription_id']}")
 
-    sub_url_p1 = f"{xui_primary.host_url}/sub/{client_id_p1}"
-    sub_url_p2 = f"{xui_secondary.host_url}/sub/{client_id_p2}"
-
-    kb = user_kb.get_vpn_menu_kb(True, float(await repo.get_setting('vpn_standard_price') or 100), int(await repo.get_setting('vpn_premium_price') or 400))
-    await safe_edit_message(call, text=(f"✅ Подписка Premium+ успешно оформлена до {new_expiry.strftime('%Y-%m-%d %H:%M')}\n\n"
-                                         f"Ссылка 1: <code>{sub_url_p1}</code>\n"
-                                         f"Ссылка 2: <code>{sub_url_p2}</code>"), reply_markup=kb)
+    kb = user_kb.get_vpn_menu_kb(True, float(await repo.get_setting('vpn_standard_price') or 100), int(await repo.get_setting('vpn_premium_price') or 400), show_upgrade=False)
+    await safe_edit_message(
+        call,
+        text=(
+            f"✅ Подписка Premium+ успешно оформлена до {new_expiry.strftime('%Y-%m-%d %H:%M')}\n\n"
+            + _render_vpn_subscription_blocks([
+                sub,
+                sec_client,
+            ], config)
+        ),
+        reply_markup=kb,
+    )
 
     # notify admins
     profit_text = (
@@ -313,8 +371,8 @@ async def buy_vpn_premium_callback(call: types.CallbackQuery, repo: Repository, 
         f"👤 Покупатель: @{call.from_user.username or call.from_user.id}\n"
         f"📅 Тариф: Premium+\n"
         f"💵 Выручка: {premium_price:.2f}₽\n"
-        f"🔗 Ссылка1: {sub_url_p1}\n"
-        f"🔗 Ссылка2: {sub_url_p2}"
+        f"🔗 Ссылка1: {xui_primary.host_url}/sub/{client_id_p1}\n"
+        f"🔗 Ссылка2: {xui_secondary.host_url}/sub/{client_id_p2}"
     )
     await fragment_sender._notify_admins(profit_text)
     try:
@@ -471,7 +529,7 @@ async def confirm_upgrade_vpn(call: types.CallbackQuery, repo: Repository, confi
         logging.exception('Failed to write purchase history for upgrade')
 
     await call.message.answer(f"✅ Апгрейд выполнен. С вашего баланса списано {upgrade_cost:.2f}₽.")
-    kb = user_kb.get_vpn_menu_kb(True, float(await repo.get_setting('vpn_standard_price') or 100), int(await repo.get_setting('vpn_premium_price') or 400))
+    kb = user_kb.get_vpn_menu_kb(True, float(await repo.get_setting('vpn_standard_price') or 100), int(await repo.get_setting('vpn_premium_price') or 400), show_upgrade=False)
     await call.message.answer('Ваша новая ссылка для второй панели:', reply_markup=kb)
 
 @router.callback_query(F.data == "vpn_connect_device")
@@ -488,11 +546,8 @@ async def vpn_device_selected_cb(call: types.CallbackQuery, repo: Repository, co
     if not subs:
         await call.answer("У вас нет активной подписки!", show_alert=True)
         return
-        
-    sub = subs[0]
-    
-    xui = xui_from_config(config)
-    sub_url = f"{xui.host_url}/sub/{sub['client_uuid']}"
+
+    rendered_subs = _render_vpn_subscription_blocks(subs, config)
     
     download_urls = {
         "ios": "https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973",
@@ -502,11 +557,16 @@ async def vpn_device_selected_cb(call: types.CallbackQuery, repo: Repository, co
     }
     dl_url = download_urls.get(device, "https://happ-app.com")
     app_name = "Happ"
+
+    tun_step = ""
+    if device in ("windows", "macos"):
+        tun_step = "\n3️⃣ В Happ на ПК выберите режим работы <b>TUN</b>"
     
     text = (
         f"<b>Инструкция по подключению ({device.upper()})</b>\n\n"
         f"1️⃣ Скачайте приложение <b>{app_name}</b> по кнопке ниже.\n"
-        f"2️⃣ После установки нажмите кнопку <b>«⚡ Подключить»</b>"
+        f"2️⃣ После установки нажмите кнопку <b>«⚡ Подключить»</b>{tun_step}\n\n"
+        f"{rendered_subs}"
     )
     
     await safe_edit_message(
@@ -525,14 +585,12 @@ async def vpn_connect_now_cb(call: types.CallbackQuery, repo: Repository, config
         await call.answer("У вас нет активной подписки!", show_alert=True)
         return
 
-    sub = subs[0]
-    xui = xui_from_config(config)
-    sub_url = f"{xui.host_url}/sub/{sub['client_uuid']}"
+    rendered_subs = _render_vpn_subscription_blocks(subs, config)
 
     text = (
         "<b>Подключение через Happ</b>\n\n"
-        "1. Скопируйте ссылку ниже:\n"
-        f"<code>{sub_url}</code>\n\n"
+        "1. Скопируйте все ссылки ниже:\n\n"
+        f"{rendered_subs}\n\n"
         "2. Откройте приложение Happ\n\n"
         "3. Сверху справа нажмите на иконку «+» и выберите «Вставить из буфера обмена»\n\n"
         "4. Профиль добавится автоматически, нажмите на него для подключения!"
@@ -599,7 +657,7 @@ async def buy_vpn_gb_callback(call: types.CallbackQuery, repo: Repository, confi
         logging.exception("Failed to clear low_gb notification record")
 
     await call.answer(f"✅ Куплено {amount} ГБ за {total_cost:.2f}₽")
-    await call.message.edit_text(f"✅ Куплено {amount} ГБ. Новый лимит: {new_total} ГБ", reply_markup=user_kb.get_vpn_menu_kb(True, float(await repo.get_setting('vpn_standard_price') or 100), int(await repo.get_setting('vpn_premium_price') or 400)))
+    await call.message.edit_text(f"✅ Куплено {amount} ГБ. Новый лимит: {new_total} ГБ", reply_markup=user_kb.get_vpn_menu_kb(True, float(await repo.get_setting('vpn_standard_price') or 100), int(await repo.get_setting('vpn_premium_price') or 400), show_upgrade=not _has_premium_subscription([client])))
 
     # notify admins
     try:
