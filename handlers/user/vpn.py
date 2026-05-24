@@ -63,8 +63,9 @@ def _render_vpn_subscription_blocks(clients, config):
             sub_url = f"{xui.host_url}/sub/{client['client_uuid']}"
             remaining_gb = int(client.get('total_gb') or 0)
             panel_name = 'Основная' if client.get('panel') == 'primary' else 'Вторая' if client.get('panel') == 'secondary' else f'Панель {client_index}'
+            traffic_text = "Безлимит" if remaining_gb == 0 else f"{remaining_gb} ГБ"
             lines.append(f"Ссылка {client_index} ({panel_name}): <code>{sub_url}</code>")
-            lines.append(f"Остаток трафика: <b>{remaining_gb} ГБ</b>")
+            lines.append(f"Остаток трафика: <b>{traffic_text}</b>")
 
         blocks.append("\n".join(lines))
 
@@ -94,7 +95,7 @@ async def vpn_menu_callback(call: types.CallbackQuery, repo: Repository, config:
         await safe_delete_and_send_photo(
             call, config, config.visuals.img_url_main,
             text,
-            user_kb.get_vpn_menu_kb(has_subs, vpn_price, premium_price, show_upgrade=not is_premium)
+            user_kb.get_vpn_menu_kb(has_subs, vpn_price, premium_price, show_upgrade=not is_premium, is_premium_user=is_premium)
         )
     else:
         await safe_delete_and_send_photo(
@@ -219,7 +220,7 @@ async def buy_vpn_plan_callback(call: types.CallbackQuery, repo: Repository, con
                 await xui.close()
                 return
             sub_url = f"{xui.host_url}/sub/{client_id}"
-            kb = user_kb.get_vpn_menu_kb(True, vpn_price, int(await repo.get_setting('vpn_premium_price') or 400))
+            kb = user_kb.get_vpn_menu_kb(True, vpn_price, int(await repo.get_setting('vpn_premium_price') or 400), is_premium_user=False)
             await safe_edit_message(call, text=f"✅ Подписка ВПН успешно оформлена до {new_expiry.strftime('%Y-%m-%d %H:%M')}\nВаша ссылка для подключения:\n<code>{sub_url}</code>", reply_markup=kb)
             # notify admins
             profit_text = (
@@ -352,7 +353,7 @@ async def buy_vpn_premium_callback(call: types.CallbackQuery, repo: Repository, 
         return
     logging.info(f"Premium+ subscription created for user {call.from_user.id}: primary={client_id_p1}, secondary={client_id_p2}, sub_id={sub['subscription_id']}")
 
-    kb = user_kb.get_vpn_menu_kb(True, float(await repo.get_setting('vpn_standard_price') or 100), int(await repo.get_setting('vpn_premium_price') or 400), show_upgrade=False)
+    kb = user_kb.get_vpn_menu_kb(True, float(await repo.get_setting('vpn_standard_price') or 100), int(await repo.get_setting('vpn_premium_price') or 400), show_upgrade=False, is_premium_user=True)
     await safe_edit_message(
         call,
         text=(
@@ -529,7 +530,7 @@ async def confirm_upgrade_vpn(call: types.CallbackQuery, repo: Repository, confi
         logging.exception('Failed to write purchase history for upgrade')
 
     await call.message.answer(f"✅ Апгрейд выполнен. С вашего баланса списано {upgrade_cost:.2f}₽.")
-    kb = user_kb.get_vpn_menu_kb(True, float(await repo.get_setting('vpn_standard_price') or 100), int(await repo.get_setting('vpn_premium_price') or 400), show_upgrade=False)
+    kb = user_kb.get_vpn_menu_kb(True, float(await repo.get_setting('vpn_standard_price') or 100), int(await repo.get_setting('vpn_premium_price') or 400), show_upgrade=False, is_premium_user=True)
     await call.message.answer('Ваша новая ссылка для второй панели:', reply_markup=kb)
 
 @router.callback_query(F.data == "vpn_connect_device")
@@ -658,7 +659,17 @@ async def buy_vpn_gb_callback(call: types.CallbackQuery, repo: Repository, confi
         logging.exception("Failed to clear low_gb notification record")
 
     await call.answer(f"✅ Куплено {amount} ГБ за {total_cost:.2f}₽")
-    await call.message.edit_text(f"✅ Куплено {amount} ГБ. Новый лимит: {new_total} ГБ", reply_markup=user_kb.get_vpn_menu_kb(True, float(await repo.get_setting('vpn_standard_price') or 100), int(await repo.get_setting('vpn_premium_price') or 400), show_upgrade=not _has_premium_subscription([client])))
+    is_premium = _has_premium_subscription([client])
+    await call.message.edit_text(
+        f"✅ Куплено {amount} ГБ. Новый лимит: {new_total} ГБ",
+        reply_markup=user_kb.get_vpn_menu_kb(
+            True,
+            float(await repo.get_setting('vpn_standard_price') or 100),
+            int(await repo.get_setting('vpn_premium_price') or 400),
+            show_upgrade=not is_premium,
+            is_premium_user=is_premium,
+        ),
+    )
 
     # notify admins
     try:
