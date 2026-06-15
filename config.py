@@ -74,14 +74,12 @@ class RollyPayConfig:
     api_key: str
 
 @dataclass
-class XUIConfig:
-    host: str
-    port: int
-    username: str
-    password: str
-    https: bool
-    inbound_id: int
-    web_base_path: str
+class RemnawaveConfig:
+    base_url: str            # e.g. https://panel.example.com
+    token: str               # Bearer API token (Panel → API Tokens)
+    squads_standard: List[str]  # internal squad UUIDs for the Standard tariff
+    squads_premium: List[str]   # internal squad UUIDs for the Premium+ tariff
+    verify_ssl: bool = True
 
 @dataclass
 class Config:
@@ -97,9 +95,8 @@ class Config:
     rollypay: RollyPayConfig
     ton: TonConfig
     fragment: FragmentConfig
-    xui: XUIConfig
+    remnawave: RemnawaveConfig
     database_url: str
-    xui2: Optional[XUIConfig] = None
 
 def load_config() -> Config:
     admin_ids_str = os.getenv("ADMIN_IDS", "")
@@ -115,20 +112,13 @@ def load_config() -> Config:
         'stel_token': os.getenv("STEL_TOKEN"),
     }
 
-    # build optional second XUI config if provided
-    xui2_host = os.getenv("XUI2_HOST", "").strip()
-    if xui2_host:
-        xui2_cfg = XUIConfig(
-            host=xui2_host,
-            port=int(os.getenv("XUI2_PORT", os.getenv("XUI_PORT", "2053"))),
-            username=os.getenv("XUI2_USERNAME", os.getenv("XUI_USERNAME", "admin")),
-            password=os.getenv("XUI2_PASSWORD", os.getenv("XUI_PASSWORD", "admin")),
-            https=os.getenv("XUI2_HTTPS", os.getenv("XUI_HTTPS", "true")).lower() == "true",
-            inbound_id=int(os.getenv("XUI2_INBOUND_ID", os.getenv("XUI_INBOUND_ID", "1"))),
-            web_base_path=os.getenv("XUI2_WEB_BASE_PATH", os.getenv("XUI_WEB_BASE_PATH", "")),
-        )
-    else:
-        xui2_cfg = None
+    def _parse_uuid_list(raw: str) -> list:
+        return [item.strip() for item in raw.split(",") if item.strip()]
+
+    squads_standard = _parse_uuid_list(os.getenv("REMNAWAVE_SQUADS_STANDARD", ""))
+    squads_premium = _parse_uuid_list(
+        os.getenv("REMNAWAVE_SQUADS_PREMIUM", os.getenv("REMNAWAVE_SQUADS_STANDARD", ""))
+    )
 
     return Config(
         bot=BotConfig(
@@ -185,15 +175,12 @@ def load_config() -> Config:
             wallets=os.getenv("FRAGMENT_WALLETS"),
             address=os.getenv("FRAGMENT_ADDRES")
         ),
-        xui=XUIConfig(
-            host=os.getenv("XUI_HOST", "127.0.0.1"),
-            port=int(os.getenv("XUI_PORT", "2053")),
-            username=os.getenv("XUI_USERNAME", "admin"),
-            password=os.getenv("XUI_PASSWORD", "admin"),
-            https=os.getenv("XUI_HTTPS", "true").lower() == "true",
-            inbound_id=int(os.getenv("XUI_INBOUND_ID", "1")),
-            web_base_path=os.getenv("XUI_WEB_BASE_PATH", ""),
+        remnawave=RemnawaveConfig(
+            base_url=os.getenv("REMNAWAVE_BASE_URL", "http://127.0.0.1:3000"),
+            token=os.getenv("REMNAWAVE_TOKEN", ""),
+            squads_standard=squads_standard,
+            squads_premium=squads_premium,
+            verify_ssl=os.getenv("REMNAWAVE_VERIFY_SSL", "true").lower() == "true",
         ),
         database_url=os.getenv("DATABASE_URL", "postgresql://bot_user:bot_password@db:5432/tg_shop"),
-        xui2=xui2_cfg
     )
