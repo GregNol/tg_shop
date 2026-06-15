@@ -5,6 +5,7 @@ class AdminSettingsStates(StatesGroup):
     waiting_for_purchase_text = State()
     waiting_for_support_contact = State()
     waiting_for_channel_forward = State()
+    waiting_for_vpn_value = State()
 
 class AdminUserManagementStates(StatesGroup):
     waiting_for_user = State()

@@ -72,6 +72,7 @@ def get_user_payments_kb(page: int, max_page: int, target_user_id: int) -> Inlin
 def get_admin_settings_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📝 Тексты", callback_data="settings_texts_menu")],
+        [InlineKeyboardButton(text="🛜 VPN-тарифы", callback_data="settings_vpn_menu")],
         [InlineKeyboardButton(text="📢 Новостной канал", callback_data="settings_channel_menu")],
         [InlineKeyboardButton(text="🆘 Поддержка", callback_data="settings_support_menu")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]

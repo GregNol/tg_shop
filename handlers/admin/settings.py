@@ -86,6 +86,94 @@ async def settings_process_new_support(message: types.Message, state: FSMContext
     await message.answer(f"✅ Контакт поддержки обновлен на @{contact}.")
     await message.answer(f"<b>🆘 Управление поддержкой</b>\n\nТекущий контакт: @{contact}", reply_markup=get_settings_support_kb())
 
+# --- VPN tariffs & limits ---
+
+# (key, label, unit, type, default)
+VPN_SETTINGS = [
+    ('vpn_standard_price', 'Цена «Стандартный»', '₽', 'float', '100'),
+    ('vpn_premium_price', 'Цена «Premium+»', '₽', 'float', '400'),
+    ('vpn_device_price', 'Устройство (в мес.)', '₽', 'float', '30'),
+    ('vpn_device_limit_default', 'Устройств по умолчанию', ' шт', 'int', '3'),
+    ('vpn_trial_days', 'Триал: дней', ' дн', 'int', '3'),
+    ('vpn_trial_gb', 'Триал: трафик', ' ГБ', 'int', '5'),
+]
+
+
+def _vpn_settings_kb(values: dict, trial_enabled: bool) -> types.InlineKeyboardMarkup:
+    rows = []
+    for key, label, unit, _type, default in VPN_SETTINGS:
+        val = values.get(key) or default
+        rows.append([types.InlineKeyboardButton(text=f"{label}: {val}{unit} ✏️", callback_data=f"settings_vpn_edit_{key}")])
+    rows.append([types.InlineKeyboardButton(text=f"🎁 Триал: {'Вкл 🟢' if trial_enabled else 'Выкл 🔴'}", callback_data="settings_vpn_toggle_trial")])
+    rows.append([types.InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_settings")])
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _vpn_settings_view(repo: Repository):
+    keys = [k for k, *_ in VPN_SETTINGS] + ['vpn_trial_enabled']
+    values = await repo.get_multiple_settings(keys)
+    trial_enabled = (values.get('vpn_trial_enabled') or '1') == '1'
+    text = "<b>🛜 VPN-тарифы и лимиты</b>\n\nНажмите параметр, чтобы изменить значение."
+    return text, _vpn_settings_kb(values, trial_enabled)
+
+
+@router.callback_query(F.data == "settings_vpn_menu")
+async def settings_vpn_menu(call: types.CallbackQuery, repo: Repository, state: FSMContext):
+    await state.clear()
+    text, kb = await _vpn_settings_view(repo)
+    await call.message.edit_text(text, reply_markup=kb)
+
+
+@router.callback_query(F.data == "settings_vpn_toggle_trial")
+async def settings_vpn_toggle_trial(call: types.CallbackQuery, repo: Repository):
+    cur = (await repo.get_setting('vpn_trial_enabled') or '1') == '1'
+    await repo.update_setting('vpn_trial_enabled', '0' if cur else '1')
+    await call.answer(f"Триал {'выключен' if cur else 'включён'}")
+    _, kb = await _vpn_settings_view(repo)
+    await call.message.edit_reply_markup(reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("settings_vpn_edit_"))
+async def settings_vpn_edit_start(call: types.CallbackQuery, state: FSMContext):
+    key = call.data.replace("settings_vpn_edit_", "")
+    spec = next((s for s in VPN_SETTINGS if s[0] == key), None)
+    if not spec:
+        await call.answer("Неизвестный параметр", show_alert=True)
+        return
+    _, label, _unit, vtype, _default = spec
+    await state.update_data(vpn_key=key, vpn_type=vtype)
+    await state.set_state(AdminSettingsStates.waiting_for_vpn_value)
+    hint = "целое число ≥ 0" if vtype == 'int' else "число ≥ 0 (можно с копейками)"
+    await call.message.edit_text(
+        f"Введите новое значение для «{label}» ({hint}):",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_vpn_menu")]]),
+    )
+
+
+@router.message(AdminSettingsStates.waiting_for_vpn_value)
+async def settings_vpn_process(message: types.Message, state: FSMContext, repo: Repository):
+    data = await state.get_data()
+    key = data.get('vpn_key')
+    vtype = data.get('vpn_type')
+    if not key:
+        await state.clear()
+        return
+    raw = (message.text or '').strip().replace(',', '.')
+    try:
+        num = float(raw)
+        if num < 0:
+            raise ValueError
+        stored = str(int(num)) if vtype == 'int' else str(round(num, 2))
+    except ValueError:
+        await message.answer("❗ Введите корректное неотрицательное число.")
+        return
+    await repo.update_setting(key, stored)
+    await state.clear()
+    text, kb = await _vpn_settings_view(repo)
+    await message.answer(f"✅ Сохранено: <b>{stored}</b>")
+    await message.answer(text, reply_markup=kb)
+
+
 @router.callback_query(F.data == "settings_channel_menu")
 async def settings_channel_menu(call: types.CallbackQuery, repo: Repository):
     settings = await repo.get_multiple_settings(['news_channel_link', 'force_subscribe'])
