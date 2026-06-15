@@ -31,9 +31,11 @@ def _group_vpn_clients(clients):
     return [grouped[subscription_id] for subscription_id in order]
 
 
-def _render_vpn_subscription_blocks(clients, config):
+def _render_vpn_subscription_blocks(clients, config, used_map=None):
     """Render one block per subscription. With Remnawave a subscription maps to a
-    single user with one aggregated subscription URL."""
+    single user with one aggregated subscription URL. `used_map` optionally maps
+    client_uuid -> number of devices currently in use."""
+    used_map = used_map or {}
     blocks = []
     for index, group in enumerate(_group_vpn_clients(clients), 1):
         primary = group[0]
@@ -44,6 +46,8 @@ def _render_vpn_subscription_blocks(clients, config):
         total_gb = int(primary.get('total_gb') or 0)
         traffic_text = "Безлимит" if total_gb == 0 else f"{total_gb} ГБ"
         devices = int(primary.get('device_limit') or 3)
+        used = used_map.get(primary.get('client_uuid'))
+        devices_text = f"{used} из {devices}" if used is not None else str(devices)
 
         lines = [
             f"<b>✦ ПРЕМИУМ-ПОДПИСКА #{index}</b>",
@@ -51,7 +55,7 @@ def _render_vpn_subscription_blocks(clients, config):
             f"<b>Статус:</b> {status}",
             f"<b>Действует до:</b> <b>{expiry}</b>",
             f"<b>Трафик:</b> <b>{traffic_text}</b>",
-            f"<b>Устройств:</b> <b>{devices}</b>",
+            f"<b>Устройств:</b> <b>{devices_text}</b>",
             "<b>━━━━━━━━━━━━━━━━━━</b>",
             "<b>Подключение:</b>",
             f"<code>{sub_url}</code>",
@@ -79,9 +83,23 @@ async def vpn_menu_callback(call: types.CallbackQuery, repo: Repository, config:
     device_price = int(await repo.get_setting('vpn_device_price') or 30)
 
     if has_subs:
+        # fetch live device usage (used/limit); resilient to API/version differences
+        used_map = {}
+        try:
+            remna = remnawave_from_config(config)
+            try:
+                for s in subs:
+                    cnt = await remna.get_device_count(s['client_uuid'])
+                    if cnt is not None:
+                        used_map[s['client_uuid']] = cnt
+            finally:
+                await remna.close()
+        except Exception:
+            logging.exception("Failed to fetch device usage")
+
         text = "<b>👑 VPN PREMIUM CABINET</b>\n"
         text += "<i>Элегантный доступ к защищенной сети</i>\n\n"
-        text += _render_vpn_subscription_blocks(subs, config)
+        text += _render_vpn_subscription_blocks(subs, config, used_map=used_map)
 
         await safe_delete_and_send_photo(
             call, config, config.visuals.img_url_main,
@@ -105,16 +123,34 @@ def _topup_kb(deficit: float) -> types.InlineKeyboardMarkup:
     ])
 
 
+async def _extra_device_fee(repo, subs, tariff_name):
+    """Monthly fee for devices bought on top of the default limit (per tariff sub).
+    Returns (fee, extra_count)."""
+    default_limit = int(await repo.get_setting('vpn_device_limit_default') or 3)
+    device_price = float(await repo.get_setting('vpn_device_price') or 30)
+    active = next((s for s in subs if s['tariff_name'] == tariff_name), None)
+    if not active:
+        return 0.0, 0
+    extra = max(0, int(active.get('device_limit') or default_limit) - default_limit)
+    return extra * device_price, extra
+
+
 async def _run_vpn_purchase(call: types.CallbackQuery, repo: Repository, config: Config, fragment_sender: FragmentSender, tariff_key: str):
     """Shared buy/extend flow with insufficient-balance auto-resume intent."""
     is_premium = tariff_key == 'premium'
     price_key = 'vpn_premium_price' if is_premium else 'vpn_standard_price'
-    price = float(await repo.get_setting(price_key) or (400 if is_premium else 100))
+    base_price = float(await repo.get_setting(price_key) or (400 if is_premium else 100))
+    tariff_label = 'Premium+' if is_premium else 'Стандартный'
     user = call.from_user
 
     if is_premium and not config.remnawave.squads_premium:
         await safe_edit_message(call, text="❌ Премиум-тариф не настроен. Администратор должен задать REMNAWAVE_SQUADS_PREMIUM.")
         return
+
+    # Extra-device monthly fee is billed together with the renewal.
+    subs = await repo.get_user_vpn_subscriptions(user.id)
+    extra_fee, extra_devices = await _extra_device_fee(repo, subs, tariff_label)
+    price = base_price + extra_fee
 
     user_db = await repo.get_user(user.id)
     balance = float(user_db["balance"])
@@ -122,11 +158,11 @@ async def _run_vpn_purchase(call: types.CallbackQuery, repo: Repository, config:
         deficit = price - balance
         # remember intent so the purchase auto-completes after top-up
         await repo.upsert_vpn_intent(user.id, tariff_key, price)
-        tariff_label = 'Premium+' if is_premium else 'Стандартный'
+        extra_note = f" (вкл. {extra_devices} доп. устройств)" if extra_devices else ""
         await safe_edit_message(
             call,
             text=(
-                f"💼 Тариф «{tariff_label}» — <b>{price:.0f}₽</b>\n"
+                f"💼 Тариф «{tariff_label}» — <b>{price:.0f}₽</b>{extra_note}\n"
                 f"На балансе: <b>{balance:.2f}₽</b>, не хватает <b>{deficit:.2f}₽</b>.\n\n"
                 "Пополните баланс — подписка оформится <b>автоматически</b>, как только средств станет достаточно."
             ),
@@ -160,7 +196,7 @@ async def _run_vpn_purchase(call: types.CallbackQuery, repo: Repository, config:
     await safe_edit_message(
         call,
         text=f"✅ Подписка «{tariff_label}» оформлена до {new_expiry.strftime('%Y-%m-%d %H:%M')}.",
-        reply_markup=user_kb.get_vpn_menu_kb(True, float(await repo.get_setting('vpn_standard_price') or 100), int(await repo.get_setting('vpn_premium_price') or 400), show_upgrade=not is_premium, is_premium_user=is_premium),
+        reply_markup=user_kb.get_vpn_menu_kb(True, float(await repo.get_setting('vpn_standard_price') or 100), int(await repo.get_setting('vpn_premium_price') or 400), show_upgrade=not is_premium, is_premium_user=is_premium, device_price=int(await repo.get_setting('vpn_device_price') or 30)),
     )
     await send_subscription_card(call.bot, user.id, result.get('subscription_url'), f"<b>🔐 {tariff_label}</b> — действует до {new_expiry.strftime('%Y-%m-%d %H:%M')}")
 

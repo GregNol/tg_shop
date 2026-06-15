@@ -68,6 +68,8 @@ async def run():
 
     standard_price = float((await repo.get_setting('vpn_standard_price') or '100'))
     premium_price = float((await repo.get_setting('vpn_premium_price') or '400'))
+    device_price = float((await repo.get_setting('vpn_device_price') or '30'))
+    default_devices = int((await repo.get_setting('vpn_device_limit_default') or '3'))
 
     now = datetime.utcnow()
     # look for subscriptions that expire within next 3 days
@@ -122,6 +124,14 @@ async def run():
                             )
                             if renewal_exists:
                                 continue
+
+                            # add monthly fee for any extra devices on this subscription
+                            dev_max = await conn.fetchval(
+                                "SELECT MAX(device_limit) FROM vpn_subscription_clients WHERE subscription_id = $1",
+                                sub_id,
+                            )
+                            extra_devices = max(0, int(dev_max or default_devices) - default_devices)
+                            renewal_price = renewal_price + extra_devices * device_price
 
                             user_row = await conn.fetchrow("SELECT balance FROM users WHERE telegram_id = $1 FOR UPDATE", user_id)
                             user_balance_val = float(user_row['balance']) if user_row and user_row['balance'] is not None else 0.0

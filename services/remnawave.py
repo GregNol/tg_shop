@@ -213,6 +213,25 @@ class RemnawaveAPI:
                 f"the panel API host? body: {snippet!r}"
             ) from e
 
+    async def get_device_count(self, user_uuid: str) -> Optional[int]:
+        """Number of HWID devices currently registered for the user, or None."""
+        url = f"{self.base_url}/hwid/devices/{user_uuid}"
+        try:
+            response = await self.session.get(url)
+            if response.status_code != 200:
+                return None
+            data = self._unwrap(response.json())
+            if isinstance(data, dict):
+                if data.get("total") is not None:
+                    return int(data["total"])
+                if isinstance(data.get("devices"), list):
+                    return len(data["devices"])
+            if isinstance(data, list):
+                return len(data)
+        except Exception:
+            logger.debug("get_device_count failed: uuid=%s", user_uuid, exc_info=True)
+        return None
+
     async def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
         url = f"{self.base_url}/users/by-username/{username}"
         try:
