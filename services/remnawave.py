@@ -10,6 +10,14 @@ logger = logging.getLogger(__name__)
 GB = 1024 ** 3
 
 
+class RemnawaveAPIError(Exception):
+    """Raised on an ambiguous API failure (network, non-2xx, non-JSON body).
+
+    Distinct from a confirmed 404, so callers can avoid destructive fallbacks
+    (e.g. recreating a user) when the panel is merely misconfigured/unreachable.
+    """
+
+
 def gb_to_bytes(total_gb: int) -> int:
     """Convert GB to bytes. 0 means unlimited (Remnawave treats 0 as no limit)."""
     try:
@@ -169,22 +177,31 @@ class RemnawaveAPI:
         return None
 
     async def get_user(self, user_uuid: str) -> Optional[Dict[str, Any]]:
+        """Return the user dict, or None only on a confirmed 404.
+
+        Raises RemnawaveAPIError on any other failure (network, non-2xx, non-JSON)
+        so callers don't mistake a misconfigured endpoint for "user missing".
+        """
         url = f"{self.base_url}/users/{user_uuid}"
         try:
             response = await self.session.get(url)
-            if response.status_code == 200:
-                return self._unwrap(response.json())
-            if response.status_code == 404:
-                return None
-            logger.error(
-                "Remnawave get_user failed: uuid=%s status=%s response=%s",
-                user_uuid,
-                response.status_code,
-                response.text[:300],
+        except Exception as e:
+            raise RemnawaveAPIError(f"GET user {user_uuid} request failed: {e}") from e
+
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            raise RemnawaveAPIError(
+                f"GET user {user_uuid}: HTTP {response.status_code} (body: {response.text[:120]!r})"
             )
-        except Exception:
-            logger.exception("Remnawave get_user exception: uuid=%s", user_uuid)
-        return None
+        try:
+            return self._unwrap(response.json())
+        except ValueError as e:
+            snippet = response.text[:120].replace("\n", " ")
+            raise RemnawaveAPIError(
+                f"GET user {user_uuid}: 200 but non-JSON body — is REMNAWAVE_BASE_URL "
+                f"the panel API host? body: {snippet!r}"
+            ) from e
 
     async def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
         url = f"{self.base_url}/users/by-username/{username}"

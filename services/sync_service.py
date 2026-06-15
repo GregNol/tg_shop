@@ -13,6 +13,7 @@ from datetime import datetime
 
 from services.remnawave import (
     RemnawaveAPI,
+    RemnawaveAPIError,
     remnawave_from_config,
     squads_for_tariff,
     make_username,
@@ -50,9 +51,14 @@ async def _sync_one(remna: RemnawaveAPI, repo, config, row) -> str:
     db_total_gb = row['total_gb']
     db_expiry = row['expires_at']
 
-    rw_user = await remna.get_user(client_uuid)
+    try:
+        rw_user = await remna.get_user(client_uuid)
+    except RemnawaveAPIError as e:
+        # Ambiguous failure — do NOT recreate (would risk duplicates). Skip this one.
+        logger.warning("Sync: skip client_uuid=%s (panel lookup failed): %s", client_uuid, e)
+        return 'error'
 
-    # --- Case 1: missing in Remnawave -> (re)create ---
+    # --- Case 1: confirmed missing (404) in Remnawave -> (re)create ---
     if rw_user is None:
         username = make_username(row['user_id'])
         created = await remna.create_user(
