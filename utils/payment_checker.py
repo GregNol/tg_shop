@@ -99,8 +99,60 @@ class PaymentChecker:
                         referrer_id, reward = ref_reward
                         await self.notify_referrer_success(referrer_id, processed_payment['amount'], reward)
 
+                    # auto-complete a pending VPN purchase if the balance now covers it
+                    try:
+                        await self.try_fulfill_vpn_intent(processed_payment['user_id'])
+                    except Exception:
+                        logger.exception("Failed to auto-fulfill VPN intent for %s", processed_payment['user_id'])
+
         except Exception as e:
             logger.error(f"Ошибка обработки платежа {payment.get('invoice_id', 'unknown')}: {e}")
+
+    async def try_fulfill_vpn_intent(self, user_id: int):
+        """If the user has a pending VPN purchase and now enough balance, complete it."""
+        intent = await self.repo.get_pending_vpn_intent(user_id)
+        if not intent:
+            return
+        amount = float(intent['amount'])
+        user = await self.repo.get_user(user_id)
+        if not user or float(user['balance']) < amount:
+            return  # still underfunded; keep intent pending for the next top-up
+
+        await self.repo.update_user_balance(user_id, amount, operation='sub')
+        from services.vpn_service import provision_vpn
+        result = await provision_vpn(self.repo, self.config, user_id, intent['tariff_key'], days=30, set_total_gb=0)
+        if not result.get('ok'):
+            await self.repo.update_user_balance(user_id, amount, operation='add')  # refund
+            logger.error("Auto-fulfill VPN failed for %s: %s", user_id, result.get('error'))
+            return
+
+        await self.repo.mark_vpn_intent(intent['id'], 'fulfilled')
+        new_expiry = result['new_expiry']
+        tariff = result['tariff_name']
+        try:
+            hist_type = 'vpn_premium' if intent['tariff_key'] == 'premium' else 'vpn_standard'
+            await self.repo.add_purchase_to_history(user_id, hist_type, f'Auto {tariff} after top-up to {new_expiry.strftime("%Y-%m-%d %H:%M")}', 30, amount, 0.0)
+        except Exception:
+            logger.exception("Failed to write history for auto-fulfilled VPN")
+
+        from utils.vpn_ui import send_subscription_card
+        try:
+            await self.bot.send_message(
+                user_id,
+                f"✅ Баланс пополнен — подписка «{tariff}» оформлена автоматически до {new_expiry.strftime('%Y-%m-%d %H:%M')}.",
+            )
+            await send_subscription_card(
+                self.bot, user_id, result.get('subscription_url'),
+                f"<b>🔐 {tariff}</b> — действует до {new_expiry.strftime('%Y-%m-%d %H:%M')}",
+            )
+        except Exception:
+            logger.exception("Failed to deliver auto-fulfilled VPN card to %s", user_id)
+
+        for admin_id in self.config.bot.admin_ids:
+            try:
+                await self.bot.send_message(admin_id, f"🔐 Авто-покупка VPN после пополнения: user={user_id}, тариф {tariff}, {amount:.2f}₽")
+            except Exception:
+                pass
 
     async def _notify_admin_payment_success(self, payment: dict):
         try:

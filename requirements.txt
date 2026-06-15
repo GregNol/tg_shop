@@ -11,3 +11,5 @@ requests
 beautifulsoup4
 lolzteam
 rollypay
+qrcode
+Pillow

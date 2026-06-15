@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import logging
 
 from services.repository import Repository
+from services.remnawave import remnawave_from_config, squads_for_tariff, make_username
 from states.admin import AdminUserManagementStates
 from keyboards.admin_kb import get_user_info_kb, get_user_payments_kb, UserPaymentsCallback, AdminUserNavCallback
 from keyboards.admin_kb import AdminVPNCallback
@@ -337,15 +338,16 @@ async def admin_give_vpn_process(message: types.Message, state: FSMContext, repo
     target_user_id = data['target_user_id']
     tariff_key = data.get('vpn_tariff', 'standard')
     tariff_name = _get_tariff_choice_text(tariff_key)
-    user = await repo.get_user(target_user_id)
-    xui = None
-    
+    is_premium = tariff_key == 'premium'
+
     try:
         subs = await repo.get_user_vpn_subscriptions(target_user_id)
         existing_sub = _find_subscription_by_tariff(subs, tariff_name)
-        if tariff_key == 'premium' and not getattr(config, 'xui2', None):
-            await message.answer('❌ Вторая панель не настроена. Нельзя выдать Premium+.')
+        if is_premium and not config.remnawave.squads_premium:
+            await message.answer('❌ Премиум-сквады не настроены (REMNAWAVE_SQUADS_PREMIUM). Нельзя выдать Premium+.')
             return
+
+        remna = remnawave_from_config(config)
 
         if existing_sub:
             current_expiry = existing_sub['expires_at']
@@ -354,29 +356,12 @@ async def admin_give_vpn_process(message: types.Message, state: FSMContext, repo
             else:
                 new_expiry = datetime.utcnow() + timedelta(days=days)
 
-            new_expiry_ms = int(new_expiry.timestamp() * 1000)
-            clients = await repo.get_subscription_clients(existing_sub['subscription_id'])
-            updated_clients = []
             try:
-                for client in clients:
-                    panel = client.get('panel') or 'primary'
-                    xui = xui_from_config(config, secondary=(panel == 'secondary'))
-                    try:
-                        await xui.login()
-                        success = await xui.update_client(
-                            inbound_id=client['inbound_id'],
-                            client_uuid=client['client_uuid'],
-                            email=client['email'],
-                            enable=True,
-                            expire_time=new_expiry_ms,
-                            total_gb=client.get('total_gb', 0),
-                        )
-                        if not success:
-                            raise RuntimeError(f'XUI update failed for {client["client_uuid"]}')
-                        updated_clients.append(client)
-                    finally:
-                        await xui.close()
-
+                updated = await remna.update_user(existing_sub['client_uuid'], expire_at=new_expiry)
+                if not updated:
+                    raise RuntimeError(f'Remnawave update failed for {existing_sub["client_uuid"]}')
+                if updated.get('subscriptionUrl'):
+                    await repo.set_subscription_url(existing_sub['client_uuid'], updated['subscriptionUrl'])
                 await repo.extend_vpn_subscription(existing_sub['client_uuid'], new_expires_at=new_expiry)
                 await message.answer(
                     f"✅ Тариф {tariff_name} успешно продлён пользователю {target_user_id} на {days} дней. Новая дата окончания: {new_expiry.strftime('%Y-%m-%d %H:%M')}"
@@ -390,164 +375,64 @@ async def admin_give_vpn_process(message: types.Message, state: FSMContext, repo
                     existing_sub['client_uuid'],
                     e,
                 )
-                await message.answer('❌ Ошибка при продлении в XUI.')
-                for client in updated_clients:
-                    try:
-                        panel = client.get('panel') or 'primary'
-                        xui = xui_from_config(config, secondary=(panel == 'secondary'))
-                        await xui.login()
-                        await xui.update_client(
-                            inbound_id=client['inbound_id'],
-                            client_uuid=client['client_uuid'],
-                            email=client['email'],
-                            enable=True,
-                            expire_time=int(current_expiry.timestamp() * 1000) if current_expiry else 0,
-                            total_gb=client.get('total_gb', 0),
-                        )
-                    except Exception:
-                        logging.exception('Failed to rollback admin VPN extend for client %s', client['client_uuid'])
-                    finally:
-                        try:
-                            await xui.close()
-                        except Exception:
-                            pass
+                await message.answer('❌ Ошибка при продлении в Remnawave.')
                 return
+            finally:
+                await remna.close()
         else:
             new_expiry = datetime.utcnow() + timedelta(days=days)
-            new_expiry_ms = int(new_expiry.timestamp() * 1000)
-            client_email = f"{target_user_id}_{user['username'] or 'user'}"
-
-            if tariff_key == 'premium':
-                xui_primary = xui_from_config(config)
-                xui_secondary = xui_from_config(config, secondary=True)
-                await xui_primary.login()
-                await xui_secondary.login()
-
-                client_email_p1 = f"{client_email}_p1"
-                client_email_p2 = f"{client_email}_p2"
-
-                client_id_p1 = await xui_primary.add_or_update_client(
-                    inbound_id=config.xui.inbound_id,
-                    email=client_email_p1,
-                    expire_time=new_expiry_ms,
+            user = await repo.get_user(target_user_id)
+            username = make_username(target_user_id)
+            try:
+                user_obj = await remna.create_user(
+                    username=username,
+                    expire_at=new_expiry,
+                    squad_uuids=squads_for_tariff(config, premium=is_premium),
+                    total_gb=0,
+                    telegram_id=target_user_id,
                 )
-                client_id_p2 = await xui_secondary.add_or_update_client(
-                    inbound_id=config.xui2.inbound_id,
-                    email=client_email_p2,
-                    expire_time=new_expiry_ms,
-                    total_gb=100,
+            finally:
+                await remna.close()
+
+            if not user_obj:
+                logging.error(
+                    'Admin VPN issue failed in Remnawave create_user: admin_id=%s target_user_id=%s username=%s tariff=%s',
+                    message.from_user.id, target_user_id, username, tariff_name,
                 )
+                await message.answer('❌ Ошибка при создании пользователя в Remnawave.')
+                return
 
-                if not client_id_p1 or not client_id_p2:
-                    await message.answer('❌ Ошибка при выдаче Premium+ в XUI.')
-                    if client_id_p1:
-                        await xui_primary.delete_client(config.xui.inbound_id, client_email_p1)
-                    if client_id_p2:
-                        await xui_secondary.delete_client(config.xui2.inbound_id, client_email_p2)
-                    await xui_primary.close()
-                    await xui_secondary.close()
-                    return
-
-                try:
-                    sub = await repo.create_vpn_subscription(
-                        user_id=target_user_id,
-                        client_uuid=client_id_p1,
-                        email=client_email_p1,
-                        inbound_id=config.xui.inbound_id,
-                        target_tariff_name='Premium+',
-                        total_gb=0,
-                        expires_at=new_expiry,
-                    )
-                    await repo.create_vpn_subscription_client(
-                        subscription_id=sub['subscription_id'],
-                        client_uuid=client_id_p2,
-                        email=client_email_p2,
-                        inbound_id=config.xui2.inbound_id,
-                        panel='secondary',
-                        total_gb=100,
-                    )
-                except Exception:
-                    logging.exception(
-                        'Admin VPN Premium+ DB create failed: admin_id=%s target_user_id=%s p1=%s p2=%s expires_at=%s',
-                        message.from_user.id,
-                        target_user_id,
-                        client_id_p1,
-                        client_id_p2,
-                        new_expiry,
-                    )
-                    await message.answer('❌ Ошибка записи Premium+ подписки в БД. Подробности в логах.')
-                    await xui_primary.close()
-                    await xui_secondary.close()
-                    return
-
-                await message.answer(
-                    f"✅ Premium+ успешно выдан пользователю {target_user_id} на {days} дней.\n"
-                    f"До: {new_expiry.strftime('%Y-%m-%d %H:%M')}\n"
-                    f"Ссылка 1: <code>{xui_primary.host_url}/sub/{client_id_p1}</code>\n"
-                    f"Ссылка 2: <code>{xui_secondary.host_url}/sub/{client_id_p2}</code>"
+            client_id = user_obj['uuid']
+            sub_url = user_obj.get('subscriptionUrl')
+            try:
+                await repo.create_vpn_subscription(
+                    user_id=target_user_id,
+                    client_uuid=client_id,
+                    email=username,
+                    inbound_id=0,
+                    target_tariff_name=tariff_name,
+                    total_gb=0,
+                    expires_at=new_expiry,
+                    subscription_url=sub_url,
                 )
-                await xui_primary.close()
-                await xui_secondary.close()
-            else:
-                xui = xui_from_config(config)
-                login_ok = await xui.login()
-                if not login_ok:
-                    logging.error('Admin VPN issue failed at login: admin_id=%s target_user_id=%s', message.from_user.id, target_user_id)
-                    await message.answer('❌ Ошибка подключения к XUI панели.')
-                    return
-
-                inbound_id = config.xui.inbound_id
-                client_id = await xui.add_or_update_client(
-                    inbound_id=inbound_id,
-                    email=client_email,
-                    expire_time=new_expiry_ms,
+            except Exception:
+                logging.exception(
+                    'Admin VPN issue DB create failed: admin_id=%s target_user_id=%s client_uuid=%s username=%s expires_at=%s',
+                    message.from_user.id,
+                    target_user_id,
+                    client_id,
+                    username,
+                    new_expiry,
                 )
-                if client_id:
-                    try:
-                        await repo.create_vpn_subscription(
-                            user_id=target_user_id,
-                            client_uuid=client_id,
-                            email=client_email,
-                            inbound_id=inbound_id,
-                            target_tariff_name='Стандартный',
-                            total_gb=0,
-                            expires_at=new_expiry,
-                        )
-                    except Exception:
-                        logging.exception(
-                            'Admin VPN issue DB create failed: admin_id=%s target_user_id=%s client_uuid=%s email=%s inbound_id=%s expires_at=%s',
-                            message.from_user.id,
-                            target_user_id,
-                            client_id,
-                            client_email,
-                            inbound_id,
-                            new_expiry,
-                        )
-                        await message.answer('❌ Ошибка записи подписки в БД. Подробности в логах.')
-                        return
+                await message.answer('❌ Ошибка записи подписки в БД. Подробности в логах.')
+                return
 
-                    sub_url = f"{xui.host_url}/sub/{client_id}"
-                    await message.answer(
-                        f"✅ ВПН ({tariff_name}) успешно выдан пользователю {target_user_id} на {days} дней.\nДо: {new_expiry.strftime('%Y-%m-%d %H:%M')}\nСсылка: <code>{sub_url}</code>"
-                    )
-                else:
-                    logging.error(
-                        'Admin VPN issue failed in XUI add_client: admin_id=%s target_user_id=%s email=%s inbound_id=%s',
-                        message.from_user.id,
-                        target_user_id,
-                        client_email,
-                        inbound_id,
-                    )
-                    await message.answer('❌ Ошибка при выдаче в XUI.')
+            await message.answer(
+                f"✅ ВПН ({tariff_name}) успешно выдан пользователю {target_user_id} на {days} дней.\nДо: {new_expiry.strftime('%Y-%m-%d %H:%M')}\nСсылка: <code>{sub_url}</code>"
+            )
     except Exception:
         logging.exception("Unhandled error in admin_give_vpn_process: admin_id=%s target_user_id=%s days=%s", message.from_user.id, target_user_id, days)
         await message.answer("❌ Внутренняя ошибка при выдаче VPN. Подробности в логах.")
-    finally:
-        try:
-            if xui is not None:
-                await xui.close()
-        except Exception:
-            pass
 
     dummy_message = await message.answer("Возврат...")
     await show_user_info_menu(dummy_message, state, repo)
@@ -578,10 +463,9 @@ async def admin_show_vpn_clients(call: types.CallbackQuery, state: FSMContext, r
     for c in clients:
         traffic_text = _format_traffic_limit(c.get('total_gb'))
         expiry_text = _format_expiry(c.get('expires_at'))
-        panel_name = 'Основная' if c.get('panel') == 'primary' else 'Вторая' if c.get('panel') == 'secondary' else c.get('panel', '-').capitalize()
         text_lines.append(
-            f"• Панель: {panel_name} | UUID: <code>{c['client_uuid']}</code>\n"
-            f"  Email: <code>{c['email']}</code> | Inbound: {c['inbound_id']}\n"
+            f"• Тариф: {c.get('tariff_name') or '-'} | UUID: <code>{c['client_uuid']}</code>\n"
+            f"  Username: <code>{c['email']}</code>\n"
             f"  Трафик: {traffic_text} | Истекает: {expiry_text}"
         )
         # action buttons per client
@@ -589,10 +473,10 @@ async def admin_show_vpn_clients(call: types.CallbackQuery, state: FSMContext, r
             types.InlineKeyboardButton(text="Продлить", callback_data=AdminVPNCallback(action="extend", client_uuid=c['client_uuid']).pack()),
             types.InlineKeyboardButton(text="Добавить GB", callback_data=AdminVPNCallback(action="add_gb", client_uuid=c['client_uuid']).pack())
         ])
-        kb_rows.append([
-            types.InlineKeyboardButton(text="🗑️ Удалить подписку", callback_data=AdminVPNCallback(action="revoke", client_uuid=c['client_uuid']).pack()),
-            types.InlineKeyboardButton(text="Открыть профиль", url=(f"{'https' if (config.xui.https if c['panel']=='primary' else config.xui2.https) else 'http'}://{(config.xui.host if c['panel']=='primary' else config.xui2.host)}:2096/sub/{c['client_uuid']}"))
-        ])
+        revoke_row = [types.InlineKeyboardButton(text="🗑️ Удалить подписку", callback_data=AdminVPNCallback(action="revoke", client_uuid=c['client_uuid']).pack())]
+        if c.get('subscription_url'):
+            revoke_row.append(types.InlineKeyboardButton(text="Открыть подписку", url=c['subscription_url']))
+        kb_rows.append(revoke_row)
 
     kb_rows.append([types.InlineKeyboardButton(text="⬅️ Назад", callback_data=AdminUserNavCallback(action="back_to_menu", target_user_id=target_user_id).pack())])
     kb = types.InlineKeyboardMarkup(inline_keyboard=kb_rows)
@@ -613,14 +497,12 @@ async def admin_vpn_action(call: types.CallbackQuery, callback_data: AdminVPNCal
             return
         logging.info(f"Admin {call.from_user.id} revoke requested for client {client_uuid} (user {client.get('user_id')})")
         clients_to_delete = await repo.get_subscription_clients(client['subscription_id'])
-        for sub_client in clients_to_delete:
-            panel = sub_client.get('panel')
-            xui = xui_from_config(config, secondary=(panel != 'primary'))
-            await xui.login()
-            try:
-                await xui.delete_client(sub_client['inbound_id'], sub_client['email'])
-            finally:
-                await xui.close()
+        remna = remnawave_from_config(config)
+        try:
+            for sub_client in clients_to_delete:
+                await remna.delete_user(sub_client['client_uuid'])
+        finally:
+            await remna.close()
         await repo.delete_vpn_subscription(client_uuid)
         logging.info(f"Admin {call.from_user.id} revoked subscription {client['subscription_id']} via client {client_uuid}")
         await call.answer('Подписка удалена', show_alert=False)
@@ -707,14 +589,12 @@ async def admin_process_add_vpn_gb(message: types.Message, state: FSMContext, re
     logging.info(f"Admin {message.from_user.id} adding {amount}GB to client {client_uuid} (was {client.get('total_gb')})")
     await repo.extend_vpn_subscription(client_uuid, added_gb=amount)
 
-    # Update client in panel
-    panel = client.get('panel')
-    xui = xui_from_config(config, secondary=(panel != 'primary'))
-    await xui.login()
-    expires = client.get('expires_at')
-    expire_ms = int(expires.timestamp() * 1000) if expires else 0
-    await xui.update_client(inbound_id=client['inbound_id'], client_uuid=client_uuid, email=client['email'], enable=True, expire_time=expire_ms, total_gb=new_total)
-    await xui.close()
+    # Update user traffic limit in Remnawave
+    remna = remnawave_from_config(config)
+    try:
+        await remna.update_user(client_uuid, total_gb=new_total)
+    finally:
+        await remna.close()
     logging.info(f"Admin {message.from_user.id} added {amount}GB to client {client_uuid}, new_total={new_total}")
     await message.answer(f'✅ Добавлено {amount} ГБ. Новый лимит: {new_total} ГБ')
     await state.clear()
@@ -752,31 +632,22 @@ async def admin_process_extend_vpn_months(message: types.Message, state: FSMCont
         new_expiry = current_expiry + timedelta(days=days)
     else:
         new_expiry = datetime.utcnow() + timedelta(days=days)
-    new_expiry_ms = int(new_expiry.timestamp() * 1000)
 
     # fetch all clients for the subscription
     sub_id = client.get('subscription_id')
     clients = await repo.get_subscription_clients(sub_id)
 
-    # prepare xui instances
-    xui_primary = xui_from_config(config)
-    xui_secondary = None
-    if getattr(config, 'xui2', None):
-        xui_secondary = xui_from_config(config, secondary=True)
-
-    # update each client in panels and DB
-    for c in clients:
-        panel = c.get('panel')
-        if panel == 'primary':
-            xui = xui_primary
-        else:
-            xui = xui_secondary or xui_primary
-
-        logging.info(f"Updating client {c['client_uuid']} on panel={panel} to expiry {new_expiry}")
-        await xui.login()
-        await xui.update_client(inbound_id=c['inbound_id'], client_uuid=c['client_uuid'], email=c['email'], enable=True, expire_time=new_expiry_ms, total_gb=c.get('total_gb', 0))
-        await repo.extend_vpn_subscription(c['client_uuid'], new_expires_at=new_expiry)
-        await xui.close()
+    # update each Remnawave user and DB
+    remna = remnawave_from_config(config)
+    try:
+        for c in clients:
+            logging.info(f"Updating Remnawave user {c['client_uuid']} to expiry {new_expiry}")
+            updated = await remna.update_user(c['client_uuid'], expire_at=new_expiry)
+            if updated and updated.get('subscriptionUrl'):
+                await repo.set_subscription_url(c['client_uuid'], updated['subscriptionUrl'])
+            await repo.extend_vpn_subscription(c['client_uuid'], new_expires_at=new_expiry)
+    finally:
+        await remna.close()
 
     logging.info(f"Admin {message.from_user.id} extended subscription {sub_id} to {new_expiry}")
     await message.answer(f'✅ Подписка продлена на {days} дней до {new_expiry.strftime("%Y-%m-%d %H:%M")}')
