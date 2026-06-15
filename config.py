@@ -80,6 +80,7 @@ class RemnawaveConfig:
     squads_standard: List[str]  # internal squad UUIDs for the Standard tariff
     squads_premium: List[str]   # internal squad UUIDs for the Premium+ tariff
     verify_ssl: bool = True
+    cookie: str = ""            # eGames Caddy access cookie, e.g. "Name=Value"
 
 @dataclass
 class Config:
@@ -181,6 +182,7 @@ def load_config() -> Config:
             squads_standard=squads_standard,
             squads_premium=squads_premium,
             verify_ssl=os.getenv("REMNAWAVE_VERIFY_SSL", "true").lower() == "true",
+            cookie=os.getenv("REMNAWAVE_COOKIE", ""),
         ),
         database_url=os.getenv("DATABASE_URL", "postgresql://bot_user:bot_password@db:5432/tg_shop"),
     )

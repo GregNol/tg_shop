@@ -75,7 +75,7 @@ class RemnawaveAPI:
     top-level `response` object, which this client unwraps for callers.
     """
 
-    def __init__(self, base_url: str, token: str, verify_ssl: bool = True):
+    def __init__(self, base_url: str, token: str, verify_ssl: bool = True, cookie: str = ""):
         base = base_url.strip().rstrip('/')
         if not base.endswith('/api'):
             base = f"{base}/api"
@@ -86,6 +86,10 @@ class RemnawaveAPI:
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+        # eGames reverse-proxy hides the panel behind a secret access cookie;
+        # without it Caddy serves the static SPA instead of proxying to the API.
+        if cookie:
+            headers["Cookie"] = cookie.strip()
         self.session = httpx.AsyncClient(headers=headers, verify=verify_ssl, timeout=30.0)
 
     async def close(self):
@@ -243,7 +247,12 @@ class RemnawaveAPI:
 def remnawave_from_config(config) -> RemnawaveAPI:
     """Create a RemnawaveAPI instance from `config.remnawave`."""
     cfg = config.remnawave
-    return RemnawaveAPI(base_url=cfg.base_url, token=cfg.token, verify_ssl=cfg.verify_ssl)
+    return RemnawaveAPI(
+        base_url=cfg.base_url,
+        token=cfg.token,
+        verify_ssl=cfg.verify_ssl,
+        cookie=getattr(cfg, "cookie", ""),
+    )
 
 
 def squads_for_tariff(config, premium: bool) -> List[str]:
