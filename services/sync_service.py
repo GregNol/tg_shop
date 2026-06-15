@@ -29,15 +29,6 @@ def _is_premium(tariff_name) -> bool:
     return 'прем' in normalized or 'premium' in normalized
 
 
-def _resolve_traffic_gb(db_total_gb, rw_traffic_bytes) -> int:
-    """Return the target traffic limit in GB (0 = unlimited wins)."""
-    db_gb = int(db_total_gb or 0)
-    rw_gb = int(round((rw_traffic_bytes or 0) / GB))
-    if db_gb == 0 or rw_gb == 0:
-        return 0  # unlimited is the maximum
-    return max(db_gb, rw_gb)
-
-
 def _resolve_expiry(db_expiry, rw_expiry):
     """Return the target expiry (latest). None means 'forever' and wins."""
     if db_expiry is None or rw_expiry is None:
@@ -84,7 +75,6 @@ async def _sync_one(remna: RemnawaveAPI, repo, config, row) -> str:
     rw_total_bytes = rw_user.get('trafficLimitBytes') or 0
     rw_expiry = parse_remnawave_datetime(rw_user.get('expireAt'))
 
-    target_gb = _resolve_traffic_gb(db_total_gb, rw_total_bytes)
     target_expiry = _resolve_expiry(db_expiry, rw_expiry)
 
     db_gb = int(db_total_gb or 0)
@@ -93,13 +83,16 @@ async def _sync_one(remna: RemnawaveAPI, repo, config, row) -> str:
     rw_needs_update = False
     update_kwargs = {}
 
-    # traffic: push to Remnawave if its limit is below target
-    if target_gb != rw_gb:
-        update_kwargs['total_gb'] = target_gb
-        rw_needs_update = True
-    # traffic: bump DB if it is below target
-    if target_gb != db_gb:
-        await repo.set_client_total_gb(client_uuid, target_gb)
+    # traffic: the bot only manages a cap when it has a positive limit
+    # (trial / bought GB). db_gb == 0 means "no bot-imposed cap" -> leave the
+    # panel's traffic limit untouched (do NOT wipe it to unlimited).
+    if db_gb > 0:
+        target_gb = db_gb if rw_gb == 0 else max(db_gb, rw_gb)
+        if target_gb != rw_gb:
+            update_kwargs['total_gb'] = target_gb
+            rw_needs_update = True
+        if target_gb != db_gb:
+            await repo.set_client_total_gb(client_uuid, target_gb)
 
     # expiry: only act when both sides have a date and they differ
     if db_expiry is not None and rw_expiry is not None and target_expiry is not None:
