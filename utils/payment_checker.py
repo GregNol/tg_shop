@@ -120,7 +120,9 @@ class PaymentChecker:
 
         await self.repo.update_user_balance(user_id, amount, operation='sub')
         from services.vpn_service import provision_vpn
-        result = await provision_vpn(self.repo, self.config, user_id, intent['tariff_key'], days=30, set_total_gb=0)
+        is_premium = intent['tariff_key'] == 'premium'
+        tariff_gb = int(await self.repo.get_setting('vpn_premium_gb' if is_premium else 'vpn_standard_gb') or 0)
+        result = await provision_vpn(self.repo, self.config, user_id, intent['tariff_key'], days=30, total_gb=tariff_gb, set_total_gb=tariff_gb)
         if not result.get('ok'):
             await self.repo.update_user_balance(user_id, amount, operation='add')  # refund
             logger.error("Auto-fulfill VPN failed for %s: %s", user_id, result.get('error'))

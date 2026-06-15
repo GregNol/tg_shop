@@ -170,9 +170,11 @@ async def _run_vpn_purchase(call: types.CallbackQuery, repo: Repository, config:
         )
         return
 
-    # Deduct, provision, refund on failure (paid purchase lifts any trial cap)
+    # Deduct, provision, refund on failure. Paid purchase sets the tariff's base
+    # traffic limit (0 = unlimited), which also lifts any trial cap.
+    tariff_gb = int(await repo.get_setting('vpn_premium_gb' if is_premium else 'vpn_standard_gb') or 0)
     await repo.update_user_balance(user.id, price, operation='sub')
-    result = await provision_vpn(repo, config, user.id, tariff_key, days=30, set_total_gb=0)
+    result = await provision_vpn(repo, config, user.id, tariff_key, days=30, total_gb=tariff_gb, set_total_gb=tariff_gb)
 
     if not result.get('ok'):
         await repo.update_user_balance(user.id, price, operation='add')
@@ -435,7 +437,7 @@ async def buy_vpn_gb_callback(call: types.CallbackQuery, repo: Repository, confi
         await call.answer("Это не ваш клиент.", show_alert=True)
         return
 
-    price_per_gb = 3.0
+    price_per_gb = float(await repo.get_setting('vpn_auto_topup_price_per_gb') or 3)
     total_cost = round(price_per_gb * amount, 2)
 
     user_db = await repo.get_user(call.from_user.id)

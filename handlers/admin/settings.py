@@ -92,8 +92,11 @@ async def settings_process_new_support(message: types.Message, state: FSMContext
 VPN_SETTINGS = [
     ('vpn_standard_price', 'Цена «Стандартный»', '₽', 'float', '100'),
     ('vpn_premium_price', 'Цена «Premium+»', '₽', 'float', '400'),
+    ('vpn_standard_gb', 'Лимит «Стандартный»', ' ГБ (0=∞)', 'int', '0'),
+    ('vpn_premium_gb', 'Лимит «Premium+»', ' ГБ (0=∞)', 'int', '0'),
     ('vpn_device_price', 'Устройство (в мес.)', '₽', 'float', '30'),
     ('vpn_device_limit_default', 'Устройств по умолчанию', ' шт', 'int', '3'),
+    ('vpn_auto_topup_price_per_gb', 'Цена за 1 ГБ', '₽', 'float', '3'),
     ('vpn_trial_days', 'Триал: дней', ' дн', 'int', '3'),
     ('vpn_trial_gb', 'Триал: трафик', ' ГБ', 'int', '5'),
 ]

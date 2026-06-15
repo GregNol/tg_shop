@@ -167,6 +167,8 @@ async def init_db(database_url: str, support_contact: str = ''):
             'vpn_trial_gb': '5',
             'vpn_device_limit_default': '3',
             'vpn_device_price': '30',
+            'vpn_standard_gb': '0',
+            'vpn_premium_gb': '0',
             'purchase_success_text': 'Спасибо за покупку ✅\nЗвёзды придут в течении 5 минут ⭐️',
             'news_channel_id': '',
             'news_channel_link': '',
