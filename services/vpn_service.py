@@ -75,12 +75,14 @@ async def provision_vpn(
 
         new_expiry = datetime.utcnow() + timedelta(days=days)
         username = make_username(user_id)
+        device_limit = int(await repo.get_setting('vpn_device_limit_default') or 3)
         user_obj = await remna.create_user(
             username=username,
             expire_at=new_expiry,
             squad_uuids=squads_for_tariff(config, premium=premium),
             total_gb=total_gb,
             telegram_id=user_id,
+            hwid_device_limit=device_limit,
         )
         if not user_obj:
             return {'ok': False, 'error': 'panel'}

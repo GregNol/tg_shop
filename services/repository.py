@@ -389,7 +389,7 @@ class Repository:
         """Получить информацию о конкретной подписке по UUID (client-level)."""
         row = await self.db.fetchrow(
             """
-            SELECT s.id as subscription_id, s.user_id, s.tariff_name, s.expires_at, c.client_uuid, c.email, c.inbound_id, c.panel, c.subscription_url, c.total_gb, c.is_active
+            SELECT s.id as subscription_id, s.user_id, s.tariff_name, s.expires_at, c.client_uuid, c.email, c.inbound_id, c.panel, c.subscription_url, c.device_limit, c.total_gb, c.is_active
             FROM vpn_subscription_clients c
             JOIN vpn_subscriptions s ON s.id = c.subscription_id
             WHERE c.client_uuid = $1
@@ -402,7 +402,7 @@ class Repository:
         """Получить все подписки конкретного пользователя (каждый клиент отдельной строкой)."""
         rows = await self.db.fetch(
             """
-            SELECT s.id as subscription_id, s.user_id, s.tariff_name, s.expires_at, c.client_uuid, c.email, c.inbound_id, c.panel, c.subscription_url, c.total_gb, c.is_active, c.created_at
+            SELECT s.id as subscription_id, s.user_id, s.tariff_name, s.expires_at, c.client_uuid, c.email, c.inbound_id, c.panel, c.subscription_url, c.device_limit, c.total_gb, c.is_active, c.created_at
             FROM vpn_subscriptions s
             JOIN vpn_subscription_clients c ON c.subscription_id = s.id
             WHERE s.user_id = $1
@@ -516,7 +516,7 @@ class Repository:
             """
             SELECT s.id AS subscription_id, s.user_id, s.tariff_name, s.expires_at,
                    c.client_uuid, c.email, c.inbound_id, c.panel, c.subscription_url,
-                   c.total_gb, c.is_active
+                   c.device_limit, c.total_gb, c.is_active
             FROM vpn_subscription_clients c
             JOIN vpn_subscriptions s ON s.id = c.subscription_id
             ORDER BY c.created_at ASC
@@ -527,6 +527,24 @@ class Repository:
         await self.db.execute(
             "UPDATE vpn_subscription_clients SET total_gb = $1 WHERE client_uuid = $2",
             total_gb, client_uuid,
+        )
+
+    async def set_device_limit(self, client_uuid: str, device_limit: int):
+        await self.db.execute(
+            "UPDATE vpn_subscription_clients SET device_limit = $1 WHERE client_uuid = $2",
+            device_limit, client_uuid,
+        )
+
+    async def add_device_to_subscription(self, client_uuid: str, delta: int = 1) -> int:
+        """Increment a subscription's device limit; returns the new limit."""
+        return await self.db.fetchval(
+            """
+            UPDATE vpn_subscription_clients
+            SET device_limit = COALESCE(device_limit, 3) + $1
+            WHERE client_uuid = $2
+            RETURNING device_limit
+            """,
+            delta, client_uuid,
         )
 
     async def update_client_identity(self, old_uuid: str, new_uuid: str, new_email: str, subscription_url: Optional[str] = None):

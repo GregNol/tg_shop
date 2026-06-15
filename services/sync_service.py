@@ -109,6 +109,16 @@ async def _sync_one(remna: RemnawaveAPI, repo, config, row) -> str:
         if target_expiry != db_expiry:
             await repo.extend_vpn_subscription(client_uuid, new_expires_at=target_expiry)
 
+    # device limit: keep the maximum of DB vs Remnawave hwidDeviceLimit
+    db_devices = int(row['device_limit'] or 3)
+    rw_devices = int(rw_user.get('hwidDeviceLimit') or 0)
+    target_devices = max(db_devices, rw_devices)
+    if target_devices != rw_devices:
+        update_kwargs['hwid_device_limit'] = target_devices
+        rw_needs_update = True
+    if target_devices != db_devices:
+        await repo.set_device_limit(client_uuid, target_devices)
+
     changed = bool(update_kwargs)
     if rw_needs_update:
         updated = await remna.update_user(client_uuid, **update_kwargs)

@@ -43,6 +43,7 @@ def _render_vpn_subscription_blocks(clients, config):
         sub_url = primary.get('subscription_url') or ''
         total_gb = int(primary.get('total_gb') or 0)
         traffic_text = "Безлимит" if total_gb == 0 else f"{total_gb} ГБ"
+        devices = int(primary.get('device_limit') or 3)
 
         lines = [
             f"<b>✦ ПРЕМИУМ-ПОДПИСКА #{index}</b>",
@@ -50,6 +51,7 @@ def _render_vpn_subscription_blocks(clients, config):
             f"<b>Статус:</b> {status}",
             f"<b>Действует до:</b> <b>{expiry}</b>",
             f"<b>Трафик:</b> <b>{traffic_text}</b>",
+            f"<b>Устройств:</b> <b>{devices}</b>",
             "<b>━━━━━━━━━━━━━━━━━━</b>",
             "<b>Подключение:</b>",
             f"<code>{sub_url}</code>",
@@ -74,6 +76,7 @@ async def vpn_menu_callback(call: types.CallbackQuery, repo: Repository, config:
     is_premium = _has_premium_subscription(subs)
     vpn_price = float(await repo.get_setting('vpn_standard_price') or 100)
     premium_price = int(await repo.get_setting('vpn_premium_price') or 400)
+    device_price = int(await repo.get_setting('vpn_device_price') or 30)
 
     if has_subs:
         text = "<b>👑 VPN PREMIUM CABINET</b>\n"
@@ -83,7 +86,7 @@ async def vpn_menu_callback(call: types.CallbackQuery, repo: Repository, config:
         await safe_delete_and_send_photo(
             call, config, config.visuals.img_url_main,
             text,
-            user_kb.get_vpn_menu_kb(has_subs, vpn_price, premium_price, show_upgrade=not is_premium, is_premium_user=is_premium)
+            user_kb.get_vpn_menu_kb(has_subs, vpn_price, premium_price, show_upgrade=not is_premium, is_premium_user=is_premium, device_price=device_price)
         )
     else:
         trial_enabled = (await repo.get_setting('vpn_trial_enabled') or '1') == '1'
@@ -449,3 +452,58 @@ async def buy_vpn_gb_callback(call: types.CallbackQuery, repo: Repository, confi
         await repo.add_purchase_to_history(call.from_user.id, 'vpn_gb', f'GB topup client={client_uuid}', amount, total_cost, 0.0)
     except Exception:
         logging.exception('Failed to write purchase history for GB topup')
+
+
+@router.callback_query(F.data == "buy_vpn_device")
+async def buy_vpn_device_callback(call: types.CallbackQuery, repo: Repository, config: Config, fragment_sender: FragmentSender):
+    """Buy +1 device slot (Remnawave hwidDeviceLimit) for the user's subscription(s)."""
+    user = call.from_user
+    subs = await repo.get_user_vpn_subscriptions(user.id)
+    if not subs:
+        await call.answer("У вас нет активной подписки.", show_alert=True)
+        return
+
+    price = float(await repo.get_setting('vpn_device_price') or 30)
+    user_db = await repo.get_user(user.id)
+    if float(user_db['balance']) < price:
+        await call.answer(f"Недостаточно средств. Нужно {price:.0f}₽", show_alert=True)
+        return
+
+    # Deduct first; refund if the panel update fails.
+    await repo.update_user_balance(user.id, price, operation='sub')
+
+    remna = remnawave_from_config(config)
+    new_limit = None
+    ok = False
+    try:
+        for sub in subs:
+            client_uuid = sub['client_uuid']
+            target = int(sub.get('device_limit') or 3) + 1
+            updated = await remna.update_user(client_uuid, hwid_device_limit=target)
+            if updated is None:
+                raise RuntimeError(f"panel update failed for {client_uuid}")
+            await repo.add_device_to_subscription(client_uuid, 1)
+            new_limit = target
+        ok = True
+    except Exception:
+        logging.exception("buy_vpn_device failed for user %s", user.id)
+    finally:
+        await remna.close()
+
+    if not ok:
+        await repo.update_user_balance(user.id, price, operation='add')  # refund
+        await call.answer("❌ Не удалось добавить устройство. Средства возвращены.", show_alert=True)
+        return
+
+    await call.answer(f"✅ Добавлено устройство. Теперь: {new_limit}")
+    try:
+        await repo.add_purchase_to_history(user.id, 'vpn_device', f'+1 device (limit {new_limit})', 1, price, 0.0)
+    except Exception:
+        logging.exception('Failed to write purchase history for device purchase')
+    try:
+        await fragment_sender._notify_admins(f"➕ @{user.username or user.id} докупил устройство за {price:.0f}₽ (лимит: {new_limit})")
+    except Exception:
+        logging.exception("Failed to notify admins about device purchase")
+
+    # refresh the VPN menu
+    await vpn_menu_callback(call, repo, config)

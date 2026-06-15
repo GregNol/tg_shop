@@ -102,6 +102,7 @@ async def init_db(database_url: str, support_contact: str = ''):
                 inbound_id INTEGER DEFAULT 0,     -- legacy (3x-ui); unused with Remnawave
                 panel TEXT DEFAULT 'primary',     -- legacy; always 'primary' with Remnawave
                 subscription_url TEXT,            -- Remnawave subscriptionUrl
+                device_limit INTEGER DEFAULT 3,   -- Remnawave hwidDeviceLimit
                 total_gb INTEGER DEFAULT 0,
                 is_active INTEGER DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -164,6 +165,8 @@ async def init_db(database_url: str, support_contact: str = ''):
             'vpn_trial_enabled': '1',
             'vpn_trial_days': '3',
             'vpn_trial_gb': '5',
+            'vpn_device_limit_default': '3',
+            'vpn_device_price': '30',
             'purchase_success_text': 'Спасибо за покупку ✅\nЗвёзды придут в течении 5 минут ⭐️',
             'news_channel_id': '',
             'news_channel_link': '',

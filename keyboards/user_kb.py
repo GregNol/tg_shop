@@ -76,6 +76,7 @@ def get_vpn_menu_kb(
     is_premium_user: bool = False,
     show_trial: bool = False,
     trial_days: int = 3,
+    device_price: int | None = None,
 ) -> InlineKeyboardMarkup:
     buttons = []
     if not has_subscriptions and show_trial:
@@ -86,6 +87,8 @@ def get_vpn_menu_kb(
             buttons.append([InlineKeyboardButton(text=f"🔄 Продлить Premium+ (1 мес) - {premium_price}₽", callback_data="buy_vpn_plan_premium_1")])
         else:
             buttons.append([InlineKeyboardButton(text=f"🔄 Продлить (1 мес) - {price}₽", callback_data="buy_vpn_plan_standard_1")])
+        if device_price is not None:
+            buttons.append([InlineKeyboardButton(text=f"➕ Докупить устройство - {device_price}₽", callback_data="buy_vpn_device")])
         # Upgrade to Premium+ option when user already has a subscription
         if premium_price is not None and show_upgrade:
             buttons.append([InlineKeyboardButton(text="⬆️ Апгрейд до Premium+", callback_data="upgrade_vpn_to_premium")])

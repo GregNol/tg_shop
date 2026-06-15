@@ -110,6 +110,7 @@ class RemnawaveAPI:
         telegram_id: Optional[int] = None,
         traffic_limit_strategy: str = "NO_RESET",
         status: str = "ACTIVE",
+        hwid_device_limit: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         """Create a Remnawave user. Returns the user object (incl. uuid,
         subscriptionUuid, subscriptionUrl) or None on failure."""
@@ -125,6 +126,8 @@ class RemnawaveAPI:
             body["expireAt"] = to_remnawave_datetime(expire_at)
         if telegram_id is not None:
             body["telegramId"] = telegram_id
+        if hwid_device_limit is not None:
+            body["hwidDeviceLimit"] = hwid_device_limit
 
         try:
             response = await self.session.post(url, json=body)
@@ -153,6 +156,7 @@ class RemnawaveAPI:
         total_gb: Optional[int] = None,
         status: Optional[str] = None,
         squad_uuids: Optional[List[str]] = None,
+        hwid_device_limit: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         """Patch a Remnawave user. Only provided fields are sent."""
         url = f"{self.base_url}/users"
@@ -165,6 +169,8 @@ class RemnawaveAPI:
             body["status"] = status
         if squad_uuids is not None:
             body["activeInternalSquads"] = [s for s in squad_uuids if s]
+        if hwid_device_limit is not None:
+            body["hwidDeviceLimit"] = hwid_device_limit
 
         try:
             response = await self.session.patch(url, json=body)

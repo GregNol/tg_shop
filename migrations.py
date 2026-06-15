@@ -15,7 +15,7 @@ import logging
 APP_VERSION = "2.0.0"  # 3x-ui -> Remnawave migration
 
 # Latest schema migration number; must equal the highest version in MIGRATIONS.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +62,17 @@ async def _m1_remnawave(conn):
     )
 
 
+async def _m2_device_limit(conn):
+    """Per-subscription device limit (Remnawave hwidDeviceLimit), default 3."""
+    await conn.execute(
+        "ALTER TABLE vpn_subscription_clients ADD COLUMN IF NOT EXISTS device_limit INTEGER DEFAULT 3"
+    )
+
+
 # Ordered list of (version, name, coroutine) migrations.
 MIGRATIONS = [
     (1, "remnawave_subscription_url", _m1_remnawave),
+    (2, "device_limit", _m2_device_limit),
 ]
 
 
