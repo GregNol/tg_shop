@@ -97,17 +97,18 @@ async def init_db(database_url: str, support_contact: str = ''):
             CREATE TABLE IF NOT EXISTS vpn_subscription_clients (
                 id SERIAL PRIMARY KEY,
                 subscription_id INTEGER NOT NULL,
-                client_uuid TEXT UNIQUE NOT NULL,
-                email TEXT NOT NULL,
-                inbound_id INTEGER NOT NULL,
-                panel TEXT DEFAULT 'primary', -- 'primary' or 'secondary'
+                client_uuid TEXT UNIQUE NOT NULL, -- Remnawave user uuid
+                email TEXT NOT NULL,              -- Remnawave username
+                inbound_id INTEGER DEFAULT 0,     -- legacy (3x-ui); unused with Remnawave
+                panel TEXT DEFAULT 'primary',     -- legacy; always 'primary' with Remnawave
+                subscription_url TEXT,            -- Remnawave subscriptionUrl
                 total_gb INTEGER DEFAULT 0,
                 is_active INTEGER DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (subscription_id) REFERENCES vpn_subscriptions(id) ON DELETE CASCADE
             )
         """)
-        
+
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -126,6 +127,18 @@ async def init_db(database_url: str, support_contact: str = ''):
             )
         """)
         
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS vpn_purchase_intents (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                tariff_key TEXT NOT NULL,      -- 'standard' | 'premium'
+                amount NUMERIC NOT NULL,       -- price to charge once funded
+                status TEXT DEFAULT 'pending', -- 'pending' | 'fulfilled' | 'cancelled'
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(telegram_id)
+            )
+        """)
+
         default_settings = {
             'star_price': '1.8',
             'star_price_mode': 'static',
@@ -148,6 +161,9 @@ async def init_db(database_url: str, support_contact: str = ''):
             'vpn_auto_topup_enabled': '1',
             'vpn_auto_topup_gb': '1',
             'vpn_auto_topup_price_per_gb': '3',
+            'vpn_trial_enabled': '1',
+            'vpn_trial_days': '3',
+            'vpn_trial_gb': '5',
             'purchase_success_text': 'Спасибо за покупку ✅\nЗвёзды придут в течении 5 минут ⭐️',
             'news_channel_id': '',
             'news_channel_link': '',
@@ -169,6 +185,10 @@ async def init_db(database_url: str, support_contact: str = ''):
                 VALUES ($1, $2)
                 ON CONFLICT (key) DO NOTHING
             """, key, value)
+
+        # Apply versioned schema migrations (auto-runs pending ones).
+        from migrations import run_migrations
+        await run_migrations(conn)
 
         logging.info("База данных инициализирована с новой схемой.")
     finally:

@@ -13,6 +13,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config import load_config
 from database import init_db, get_db_connection
+from migrations import APP_VERSION
 from handlers.user import get_user_router
 from handlers.admin import get_admin_router
 from middlewares.access import AccessMiddleware
@@ -64,8 +65,9 @@ def check_payment_systems(config):
 
 async def start_bot():
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+    logging.info("Запуск бота, версия %s", APP_VERSION)
     config = load_config()
-    
+
     if not config.bot.admin_ids or not config.bot.bot_token:
         logging.critical("ADMIN_IDS или BOT_TOKEN не указаны. Выход.")
         sys.exit(1)
@@ -79,6 +81,14 @@ async def start_bot():
     db_pool = await get_db_connection(config.database_url)
     
     repo = Repository(db_pool)
+
+    # Reconcile DB subscriptions with the Remnawave panel on startup.
+    try:
+        from services.sync_service import sync_subscriptions
+        await sync_subscriptions(repo, config)
+    except Exception:
+        logging.exception("VPN subscriptions sync failed on startup")
+
     fragment_sender = FragmentSender(config, bot)
 
     dp["repo"] = repo

@@ -7,7 +7,9 @@ import logging
 from services.repository import Repository
 from keyboards import user_kb
 from config import Config
-from services.xui import xui_from_config
+from services.remnawave import remnawave_from_config, squads_for_tariff, make_username
+from services.vpn_service import provision_vpn
+from utils.vpn_ui import send_subscription_card
 from utils.safe_message import safe_delete_and_send_photo, safe_edit_message
 from services.fragment_sender import FragmentSender
 from services.profit_calculator import ProfitCalculator
@@ -15,20 +17,6 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram import Bot
 
 router = Router()
-
-
-def _sort_vpn_clients(clients):
-    panel_order = {
-        'primary': 0,
-        'secondary': 1,
-    }
-    return sorted(
-        clients,
-        key=lambda client: (
-            panel_order.get(client.get('panel') or '', 2),
-            client.get('created_at') or datetime.min,
-        ),
-    )
 
 
 def _group_vpn_clients(clients):
@@ -44,36 +32,28 @@ def _group_vpn_clients(clients):
 
 
 def _render_vpn_subscription_blocks(clients, config):
+    """Render one block per subscription. With Remnawave a subscription maps to a
+    single user with one aggregated subscription URL."""
     blocks = []
     for index, group in enumerate(_group_vpn_clients(clients), 1):
-        sorted_group = _sort_vpn_clients(group)
-        primary_client = next((client for client in sorted_group if client.get('panel') == 'primary'), sorted_group[0])
-        tariff_name = primary_client.get('tariff_name') or 'VPN'
-        status = '✅ Активна' if any(int(client.get('is_active') or 0) == 1 for client in sorted_group) else '❌ Выключена'
-        expiry = primary_client['expires_at'].strftime('%Y-%m-%d %H:%M') if primary_client.get('expires_at') else 'Бессрочно'
+        primary = group[0]
+        tariff_name = primary.get('tariff_name') or 'VPN'
+        status = '✅ Активна' if any(int(client.get('is_active') or 0) == 1 for client in group) else '❌ Выключена'
+        expiry = primary['expires_at'].strftime('%Y-%m-%d %H:%M') if primary.get('expires_at') else 'Бессрочно'
+        sub_url = primary.get('subscription_url') or ''
+        total_gb = int(primary.get('total_gb') or 0)
+        traffic_text = "Безлимит" if total_gb == 0 else f"{total_gb} ГБ"
 
         lines = [
             f"<b>✦ ПРЕМИУМ-ПОДПИСКА #{index}</b>",
             f"<b>Тариф:</b> «{tariff_name}»",
             f"<b>Статус:</b> {status}",
             f"<b>Действует до:</b> <b>{expiry}</b>",
-            f"<b>Конфигов:</b> <b>{len(sorted_group)}</b>",
+            f"<b>Трафик:</b> <b>{traffic_text}</b>",
             "<b>━━━━━━━━━━━━━━━━━━</b>",
+            "<b>Подключение:</b>",
+            f"<code>{sub_url}</code>",
         ]
-
-        for client_index, client in enumerate(sorted_group, 1):
-            xui = xui_from_config(config, secondary=(client.get('panel') == 'secondary'))
-            sub_url = f"{xui.host_url}/sub/{client['client_uuid']}"
-            remaining_gb = int(client.get('total_gb') or 0)
-            panel_name = 'Основная' if client.get('panel') == 'primary' else 'Вторая' if client.get('panel') == 'secondary' else f'Панель {client_index}'
-            traffic_text = "Безлимит" if remaining_gb == 0 else f"{remaining_gb} ГБ"
-            lines.append(f"<b>◆ Конфиг {client_index} · {panel_name}</b>")
-            lines.append(f"<b>Трафик:</b> <b>{traffic_text}</b>")
-            lines.append("<b>Подключение:</b>")
-            lines.append(f"<code>{sub_url}</code>")
-            if client_index < len(sorted_group):
-                lines.append("<b>────────────</b>")
-
         blocks.append("\n".join(lines))
 
     return "\n\n".join(blocks)
@@ -106,291 +86,145 @@ async def vpn_menu_callback(call: types.CallbackQuery, repo: Repository, config:
             user_kb.get_vpn_menu_kb(has_subs, vpn_price, premium_price, show_upgrade=not is_premium, is_premium_user=is_premium)
         )
     else:
+        trial_enabled = (await repo.get_setting('vpn_trial_enabled') or '1') == '1'
+        trial_available = trial_enabled and not await repo.has_used_trial(user_id)
+        trial_days = int(await repo.get_setting('vpn_trial_days') or 3)
         await safe_delete_and_send_photo(
             call, config, config.visuals.img_url_main,
             "<b>🔐 ВПН Сервис</b>\n\nУ вас еще нет подписки. Купите её для безопасного доступа к сети:",
-            user_kb.get_vpn_menu_kb(has_subs, vpn_price, premium_price)
+            user_kb.get_vpn_menu_kb(has_subs, vpn_price, premium_price, show_trial=trial_available, trial_days=trial_days)
         )
+
+def _topup_kb(deficit: float) -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text=f"💳 Пополнить на {deficit:.0f}₽ и подключить", callback_data="profile_topup_menu")],
+        [types.InlineKeyboardButton(text="⬅️ Назад", callback_data="vpn_menu")],
+    ])
+
+
+async def _run_vpn_purchase(call: types.CallbackQuery, repo: Repository, config: Config, fragment_sender: FragmentSender, tariff_key: str):
+    """Shared buy/extend flow with insufficient-balance auto-resume intent."""
+    is_premium = tariff_key == 'premium'
+    price_key = 'vpn_premium_price' if is_premium else 'vpn_standard_price'
+    price = float(await repo.get_setting(price_key) or (400 if is_premium else 100))
+    user = call.from_user
+
+    if is_premium and not config.remnawave.squads_premium:
+        await safe_edit_message(call, text="❌ Премиум-тариф не настроен. Администратор должен задать REMNAWAVE_SQUADS_PREMIUM.")
+        return
+
+    user_db = await repo.get_user(user.id)
+    balance = float(user_db["balance"])
+    if balance < price:
+        deficit = price - balance
+        # remember intent so the purchase auto-completes after top-up
+        await repo.upsert_vpn_intent(user.id, tariff_key, price)
+        tariff_label = 'Premium+' if is_premium else 'Стандартный'
+        await safe_edit_message(
+            call,
+            text=(
+                f"💼 Тариф «{tariff_label}» — <b>{price:.0f}₽</b>\n"
+                f"На балансе: <b>{balance:.2f}₽</b>, не хватает <b>{deficit:.2f}₽</b>.\n\n"
+                "Пополните баланс — подписка оформится <b>автоматически</b>, как только средств станет достаточно."
+            ),
+            reply_markup=_topup_kb(deficit),
+        )
+        return
+
+    # Deduct, provision, refund on failure (paid purchase lifts any trial cap)
+    await repo.update_user_balance(user.id, price, operation='sub')
+    result = await provision_vpn(repo, config, user.id, tariff_key, days=30, set_total_gb=0)
+
+    if not result.get('ok'):
+        await repo.update_user_balance(user.id, price, operation='add')
+        await safe_edit_message(call, text="❌ Ошибка при оформлении в Remnawave. Средства возвращены.")
+        try:
+            await fragment_sender._notify_admins(f"❌ Ошибка покупки VPN ({tariff_key}) для @{user.username or user.id}: {result.get('error')}")
+        except Exception:
+            logging.exception("Failed to notify admins about VPN purchase failure")
+        return
+
+    # any pending intent is now satisfied
+    pending = await repo.get_pending_vpn_intent(user.id)
+    if pending:
+        await repo.mark_vpn_intent(pending['id'], 'fulfilled')
+
+    new_expiry = result['new_expiry']
+    tariff_label = result['tariff_name']
+    action = 'продление' if result.get('extended') else 'новая'
+
+    await call.answer("✅ Готово!")
+    await safe_edit_message(
+        call,
+        text=f"✅ Подписка «{tariff_label}» оформлена до {new_expiry.strftime('%Y-%m-%d %H:%M')}.",
+        reply_markup=user_kb.get_vpn_menu_kb(True, float(await repo.get_setting('vpn_standard_price') or 100), int(await repo.get_setting('vpn_premium_price') or 400), show_upgrade=not is_premium, is_premium_user=is_premium),
+    )
+    await send_subscription_card(call.bot, user.id, result.get('subscription_url'), f"<b>🔐 {tariff_label}</b> — действует до {new_expiry.strftime('%Y-%m-%d %H:%M')}")
+
+    hist_type = 'vpn_premium' if is_premium else 'vpn_standard'
+    try:
+        await repo.add_purchase_to_history(user.id, hist_type, f'{tariff_label} {action} to {new_expiry.strftime("%Y-%m-%d %H:%M")}', 30, price, 0.0)
+    except Exception:
+        logging.exception('Failed to write purchase history for VPN purchase')
+    try:
+        await fragment_sender._notify_admins(
+            f"🔐 <b>Покупка VPN</b>\n👤 @{user.username or user.id}\n📅 {tariff_label} ({action})\n💵 {price:.2f}₽\n📆 До {new_expiry.strftime('%Y-%m-%d %H:%M')}"
+        )
+    except Exception:
+        logging.exception("Failed to notify admins about VPN purchase")
+
 
 @router.callback_query(F.data == "buy_vpn_plan_standard_1")
 async def buy_vpn_plan_callback(call: types.CallbackQuery, repo: Repository, config: Config, fragment_sender: FragmentSender):
-    vpn_price = float(await repo.get_setting('vpn_standard_price') or 100)
-    user_db = await repo.get_user(call.from_user.id)
-    
-    if float(user_db["balance"]) < vpn_price:
-        await safe_edit_message(call, text=f"Недостаточно средств! Не хватает: <b>{vpn_price - float(user_db['balance'])}₽</b>", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="💰 Пополнить баланс", callback_data="profile_topup_menu")]]))
-        return
-
-    # Deduct balance
-    await repo.update_user_balance(call.from_user.id, vpn_price, operation='sub')
-    
-    # Process XUI
-    xui = xui_from_config(config)
-    
-    await xui.login()
-    
-    # Check if user already has a subscription to extend or create a new one
-    subs = await repo.get_user_vpn_subscriptions(call.from_user.id)
-    active_sub = None
-    for sub in subs:
-        if sub['tariff_name'] == 'Стандартный':
-            active_sub = sub
-            break
-    
-    days_to_add = 30
-    duration_ms = days_to_add * 24 * 60 * 60 * 1000
-    
-    if active_sub:
-        # Extend
-        current_expiry = active_sub['expires_at'] if active_sub['expires_at'] is not None else None
-        if current_expiry and current_expiry > datetime.utcnow():
-            new_expiry = current_expiry + timedelta(days=days_to_add)
-        else:
-            new_expiry = datetime.utcnow() + timedelta(days=days_to_add)
-
-        # Add to XUI
-        email = active_sub['email']
-        client_uuid = active_sub['client_uuid']
-        inbound_id = active_sub['inbound_id']
-        
-        # updateClient doesn't magically add time, it sets absolute expiry time
-        new_expiry_ms = int(new_expiry.timestamp() * 1000)
-        
-        success = await xui.update_client(
-            inbound_id=inbound_id,
-            client_uuid=client_uuid,
-            email=email,
-            enable=True,
-            expire_time=new_expiry_ms
-        )
-        
-        if success:
-            await repo.extend_vpn_subscription(client_uuid, new_expires_at=new_expiry)
-            await safe_edit_message(call, text=f"✅ Ваша подписка успешно продлена до {new_expiry.strftime('%Y-%m-%d %H:%M')}", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")]]))
-            # notify admins
-            profit_calc = ProfitCalculator()
-            profit_text = (
-                f"🔐 <b>Новая покупка VPN</b>\n\n"
-                f"👤 Покупатель: @{call.from_user.username or call.from_user.id}\n"
-                f"📅 Тариф: Стандартный (продление)\n"
-                f"💵 Выручка: {vpn_price:.2f}₽\n"
-                f"📆 До: {new_expiry.strftime('%Y-%m-%d %H:%M')}"
-            )
-            await fragment_sender._notify_admins(profit_text)
-            try:
-                await repo.add_purchase_to_history(call.from_user.id, 'vpn_standard', f'Standard extend to {new_expiry.strftime("%Y-%m-%d %H:%M")}', days_to_add, vpn_price, 0.0)
-            except Exception:
-                logging.exception('Failed to write purchase history for standard extend')
-        else:
-            # refund
-            await repo.update_user_balance(call.from_user.id, vpn_price, operation='add')
-            await safe_edit_message(call, text="❌ Ошибка при продлении в XUI. Средства возвращены.")
-            try:
-                await fragment_sender._notify_admins(f"❌ Ошибка продления VPN для @{call.from_user.username or call.from_user.id}: ошибка при обновлении клиента в XUI.")
-            except Exception:
-                logging.exception("Failed to notify admins about VPN extend failure")
-            
-    else:
-        # Create new
-        client_email = f"{call.from_user.id}_{call.from_user.username or 'user'}"
-        new_expiry = datetime.utcnow() + timedelta(days=days_to_add)
-        new_expiry_ms = int(new_expiry.timestamp() * 1000)
-        inbound_id = config.xui.inbound_id
-        
-        client_id = await xui.add_or_update_client(
-            inbound_id=inbound_id,
-            email=client_email,
-            expire_time=new_expiry_ms
-        )
-
-        if client_id:
-            try:
-                await repo.create_vpn_subscription(
-                    user_id=call.from_user.id,
-                    client_uuid=client_id,
-                    email=client_email,
-                    inbound_id=inbound_id,
-                    target_tariff_name='Стандартный',
-                    total_gb=0,
-                    expires_at=new_expiry
-                )
-            except Exception:
-                logging.exception(
-                    "User VPN standard create failed: user_id=%s client_uuid=%s email=%s inbound_id=%s expires_at=%s",
-                    call.from_user.id,
-                    client_id,
-                    client_email,
-                    inbound_id,
-                    new_expiry,
-                )
-                await repo.update_user_balance(call.from_user.id, vpn_price, operation='add')
-                await safe_edit_message(call, text="❌ Ошибка записи подписки в БД. Средства возвращены. Подробности в логах.")
-                await xui.close()
-                return
-            sub_url = f"{xui.host_url}/sub/{client_id}"
-            kb = user_kb.get_vpn_menu_kb(True, vpn_price, int(await repo.get_setting('vpn_premium_price') or 400), is_premium_user=False)
-            await safe_edit_message(call, text=f"✅ Подписка ВПН успешно оформлена до {new_expiry.strftime('%Y-%m-%d %H:%M')}\nВаша ссылка для подключения:\n<code>{sub_url}</code>", reply_markup=kb)
-            # notify admins
-            profit_text = (
-                f"🔐 <b>Новая покупка VPN</b>\n\n"
-                f"👤 Покупатель: @{call.from_user.username or call.from_user.id}\n"
-                f"📅 Тариф: Стандартный (новая)\n"
-                f"💵 Выручка: {vpn_price:.2f}₽\n"
-                f"🔗 Ссылка: {sub_url}"
-            )
-            await fragment_sender._notify_admins(profit_text)
-            try:
-                await repo.add_purchase_to_history(call.from_user.id, 'vpn_standard', f'Standard new sub {sub_url}', days_to_add, vpn_price, 0.0)
-            except Exception:
-                logging.exception('Failed to write purchase history for standard new')
-        else:
-            await repo.update_user_balance(call.from_user.id, vpn_price, operation='add')
-            await safe_edit_message(call, text="❌ Ошибка при создании в XUI. Средства возвращены.")
-            try:
-                await fragment_sender._notify_admins(f"❌ Ошибка создания VPN для @{call.from_user.username or call.from_user.id}: не удалось создать клиента в XUI при оформлении новой подписки.")
-            except Exception:
-                logging.exception("Failed to notify admins about VPN create failure")
-            
-    await xui.close()
+    await _run_vpn_purchase(call, repo, config, fragment_sender, tariff_key='standard')
 
 
 @router.callback_query(F.data == "buy_vpn_plan_premium_1")
 async def buy_vpn_premium_callback(call: types.CallbackQuery, repo: Repository, config: Config, fragment_sender: FragmentSender):
-    """Купить премиум-тариф, создающий клиентов в обеих панелях.
-    Второй клиент получает ограничение трафика в 100 ГБ.
-    """
-    premium_price = float(await repo.get_setting('vpn_premium_price') or 400)
-    user_db = await repo.get_user(call.from_user.id)
-    if float(user_db["balance"]) < premium_price:
-        await safe_edit_message(call, text=f"Недостаточно средств! Не хватает: <b>{premium_price - float(user_db['balance'])}₽</b>", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="💰 Пополнить баланс", callback_data="profile_topup_menu")]]))
-        return
+    await _run_vpn_purchase(call, repo, config, fragment_sender, tariff_key='premium')
 
-    # Deduct balance
-    await repo.update_user_balance(call.from_user.id, premium_price, operation='sub')
 
-    logging.info(f"User {call.from_user.id} attempts to buy Premium+ for {premium_price} RUB")
-    # Ensure secondary panel configured
-    if not getattr(config, 'xui2', None):
-        await repo.update_user_balance(call.from_user.id, premium_price, operation='add')
-        await safe_edit_message(call, text="❌ Вторая панель не настроена. Администратор должен задать XUI2_* переменные.")
-        try:
-            await fragment_sender._notify_admins(f"❌ Пользователь @{call.from_user.username or call.from_user.id} попытался купить Premium+, но в конфиге не настроена вторая панель (XUI2_*).")
-        except Exception:
-            logging.exception("Failed to notify admins about missing xui2 config")
-        return
-
-    xui_primary = xui_from_config(config)
-    xui_secondary = xui_from_config(config, secondary=True)
-
-    await xui_primary.login()
-    await xui_secondary.login()
-
-    days_to_add = 30
-    new_expiry = datetime.utcnow() + timedelta(days=days_to_add)
-    new_expiry_ms = int(new_expiry.timestamp() * 1000)
-
+@router.callback_query(F.data == "buy_vpn_trial")
+async def buy_vpn_trial_callback(call: types.CallbackQuery, repo: Repository, config: Config, fragment_sender: FragmentSender):
     user = call.from_user
-    client_email_p1 = f"{user.id}_{user.username or 'user'}_p1"
-    client_email_p2 = f"{user.id}_{user.username or 'user'}_p2"
+    if (await repo.get_setting('vpn_trial_enabled') or '1') != '1':
+        await call.answer("Пробный период сейчас недоступен.", show_alert=True)
+        return
+    if await repo.has_used_trial(user.id):
+        await call.answer("Вы уже использовали пробный период.", show_alert=True)
+        return
+    if await repo.get_user_vpn_subscriptions(user.id):
+        await call.answer("Пробный период доступен только новым пользователям.", show_alert=True)
+        return
 
-    # create primary client
-    inbound_id_p1 = config.xui.inbound_id
-    client_id_p1 = await xui_primary.add_or_update_client(
-        inbound_id=inbound_id_p1,
-        email=client_email_p1,
-        expire_time=new_expiry_ms
-    )
+    trial_days = int(await repo.get_setting('vpn_trial_days') or 3)
+    trial_gb = int(await repo.get_setting('vpn_trial_gb') or 5)
 
-    # create secondary client with 100GB limit
-    inbound_id_p2 = config.xui2.inbound_id
-    client_id_p2 = await xui_secondary.add_or_update_client(
-        inbound_id=inbound_id_p2,
-        email=client_email_p2,
-        expire_time=new_expiry_ms,
-        total_gb=100
-    )
-
-    if not client_id_p1 or not client_id_p2:
-        # refund
-        await repo.update_user_balance(call.from_user.id, premium_price, operation='add')
-        logging.error(f"Failed to create premium clients for user {call.from_user.id}: p1={client_id_p1}, p2={client_id_p2}")
-        await safe_edit_message(call, text="❌ Ошибка при создании клиентов в панелях. Средства возвращены.")
+    result = await provision_vpn(repo, config, user.id, 'standard', days=trial_days, total_gb=trial_gb)
+    if not result.get('ok'):
+        await call.answer("❌ Не удалось активировать пробный период. Попробуйте позже.", show_alert=True)
         try:
-            await fragment_sender._notify_admins(f"❌ Ошибка создания Premium+ для @{call.from_user.username or call.from_user.id}: p1={client_id_p1}, p2={client_id_p2}")
+            await fragment_sender._notify_admins(f"❌ Ошибка триала VPN для @{user.username or user.id}: {result.get('error')}")
         except Exception:
-            logging.exception("Failed to notify admins about premium client creation failure")
-        await xui_primary.close()
-        await xui_secondary.close()
+            logging.exception("Failed to notify admins about trial failure")
         return
 
-    # persist to DB: create subscription (primary client) and then add secondary client linked to it
-    try:
-        sub = await repo.create_vpn_subscription(
-            user_id=call.from_user.id,
-            client_uuid=client_id_p1,
-            email=client_email_p1,
-            inbound_id=inbound_id_p1,
-            target_tariff_name='Premium+',
-            total_gb=0,
-            expires_at=new_expiry
-        )
-
-        # create secondary client record linked to same subscription
-        sec_client = await repo.create_vpn_subscription_client(
-            subscription_id=sub['subscription_id'],
-            client_uuid=client_id_p2,
-            email=client_email_p2,
-            inbound_id=inbound_id_p2,
-            panel='secondary',
-            total_gb=100
-        )
-    except Exception:
-        logging.exception(
-            "User VPN premium DB create failed: user_id=%s p1_uuid=%s p2_uuid=%s p1_inbound=%s p2_inbound=%s expires_at=%s",
-            call.from_user.id,
-            client_id_p1,
-            client_id_p2,
-            inbound_id_p1,
-            inbound_id_p2,
-            new_expiry,
-        )
-        await repo.update_user_balance(call.from_user.id, premium_price, operation='add')
-        await safe_edit_message(call, text="❌ Ошибка записи Premium+ подписки в БД. Средства возвращены. Подробности в логах.")
-        await xui_primary.close()
-        await xui_secondary.close()
-        return
-    logging.info(f"Premium+ subscription created for user {call.from_user.id}: primary={client_id_p1}, secondary={client_id_p2}, sub_id={sub['subscription_id']}")
-
-    kb = user_kb.get_vpn_menu_kb(True, float(await repo.get_setting('vpn_standard_price') or 100), int(await repo.get_setting('vpn_premium_price') or 400), show_upgrade=False, is_premium_user=True)
+    new_expiry = result['new_expiry']
+    await call.answer("🎁 Пробный период активирован!")
     await safe_edit_message(
         call,
-        text=(
-            f"✅ Подписка Premium+ успешно оформлена до {new_expiry.strftime('%Y-%m-%d %H:%M')}\n\n"
-            + _render_vpn_subscription_blocks([
-                sub,
-                sec_client,
-            ], config)
-        ),
-        reply_markup=kb,
+        text=f"🎁 Пробный доступ на {trial_days} дн. ({trial_gb} ГБ) активирован до {new_expiry.strftime('%Y-%m-%d %H:%M')}.",
+        reply_markup=user_kb.get_vpn_menu_kb(True, float(await repo.get_setting('vpn_standard_price') or 100), int(await repo.get_setting('vpn_premium_price') or 400), is_premium_user=False),
     )
-
-    # notify admins
-    profit_text = (
-        f"🔐 <b>Новая покупка VPN</b>\n\n"
-        f"👤 Покупатель: @{call.from_user.username or call.from_user.id}\n"
-        f"📅 Тариф: Premium+\n"
-        f"💵 Выручка: {premium_price:.2f}₽\n"
-        f"🔗 Ссылка1: {xui_primary.host_url}/sub/{client_id_p1}\n"
-        f"🔗 Ссылка2: {xui_secondary.host_url}/sub/{client_id_p2}"
-    )
-    await fragment_sender._notify_admins(profit_text)
+    await send_subscription_card(call.bot, user.id, result.get('subscription_url'), f"<b>🎁 Пробный VPN</b> — до {new_expiry.strftime('%Y-%m-%d %H:%M')}")
     try:
-        await repo.add_purchase_to_history(call.from_user.id, 'vpn_premium', f'Premium+ sub {sub["subscription_id"]}', days_to_add, premium_price, 0.0)
+        await repo.add_purchase_to_history(user.id, 'vpn_trial', f'Trial {trial_days}d/{trial_gb}gb', trial_days, 0.0, 0.0)
     except Exception:
-        logging.exception('Failed to write purchase history for premium purchase')
-
-    await xui_primary.close()
-    await xui_secondary.close()
+        logging.exception('Failed to write purchase history for trial')
+    try:
+        await fragment_sender._notify_admins(f"🎁 Триал VPN для @{user.username or user.id}: {trial_days} дн., {trial_gb} ГБ")
+    except Exception:
+        logging.exception("Failed to notify admins about trial")
 
 
 @router.callback_query(F.data == "upgrade_vpn_to_premium")
@@ -475,61 +309,43 @@ async def confirm_upgrade_vpn(call: types.CallbackQuery, repo: Repository, confi
         await call.answer(f"Недостаточно средств. Нужно {upgrade_cost:.2f}₽", show_alert=True)
         return
 
-    if not getattr(config, 'xui2', None):
-        await call.answer('Вторая панель не настроена. Обратитесь к администратору.', show_alert=True)
+    if not config.remnawave.squads_premium:
+        await call.answer('Премиум-тариф не настроен. Обратитесь к администратору.', show_alert=True)
         return
 
     # Deduct balance
     await repo.update_user_balance(user_id, upgrade_cost, operation='sub')
 
-    # create secondary client on secondary panel
-    xui_secondary = xui_from_config(config, secondary=True)
-    await xui_secondary.login()
-    client_email_p2 = f"{user.id}_{user.username or 'user'}_p2"
-    inbound_id_p2 = config.xui2.inbound_id
-    new_expiry_ms = int(expires_at.timestamp() * 1000)
-
-    client_id_p2 = await xui_secondary.add_or_update_client(
-        inbound_id=inbound_id_p2,
-        email=client_email_p2,
-        expire_time=new_expiry_ms,
-        total_gb=100
+    # Move the existing Remnawave user into the premium squads
+    remna = remnawave_from_config(config)
+    updated = await remna.update_user(
+        active_sub['client_uuid'],
+        squad_uuids=squads_for_tariff(config, premium=True),
     )
+    await remna.close()
 
-    if not client_id_p2:
+    if not updated:
         # refund
         await repo.update_user_balance(user_id, upgrade_cost, operation='add')
-        await xui_secondary.close()
-        await call.message.answer('❌ Ошибка при создании клиента на второй панели. Средства возвращены.')
+        await call.message.answer('❌ Ошибка при апгрейде в Remnawave. Средства возвращены.')
         try:
-            await fragment_sender._notify_admins(f"❌ Ошибка апгрейда VPN для @{user.username or user.id}: не удалось создать клиента на второй панели.")
+            await fragment_sender._notify_admins(f"❌ Ошибка апгрейда VPN для @{user.username or user.id}: не удалось обновить сквады пользователя.")
         except Exception:
-            logging.exception("Failed to notify admins about upgrade client creation failure")
+            logging.exception("Failed to notify admins about upgrade failure")
         return
 
-    # persist client and change tariff
-    await repo.create_vpn_subscription_client(
-        subscription_id=active_sub['subscription_id'],
-        client_uuid=client_id_p2,
-        email=client_email_p2,
-        inbound_id=inbound_id_p2,
-        panel='secondary',
-        total_gb=100
-    )
+    if updated.get('subscriptionUrl'):
+        await repo.set_subscription_url(active_sub['client_uuid'], updated['subscriptionUrl'])
 
     # update subscription tariff name to Premium+
     await repo.change_vpn_subscription_tariff(active_sub['client_uuid'], 'Premium+')
 
-    await xui_secondary.close()
-
     # notify admins
-    sub_url_p2 = f"{xui_secondary.host_url}/sub/{client_id_p2}"
     profit_text = (
         f"🔐 <b>Апгрейд VPN</b>\n\n"
         f"👤 Пользователь: @{user.username or user.id}\n"
         f"📅 Тариф: Premium+\n"
-        f"💵 Оплата апгрейда: {upgrade_cost:.2f}₽\n"
-        f"🔗 Ссылка2: {sub_url_p2}"
+        f"💵 Оплата апгрейда: {upgrade_cost:.2f}₽"
     )
     await fragment_sender._notify_admins(profit_text)
     try:
@@ -539,51 +355,7 @@ async def confirm_upgrade_vpn(call: types.CallbackQuery, repo: Repository, confi
 
     await call.message.answer(f"✅ Апгрейд выполнен. С вашего баланса списано {upgrade_cost:.2f}₽.")
     kb = user_kb.get_vpn_menu_kb(True, float(await repo.get_setting('vpn_standard_price') or 100), int(await repo.get_setting('vpn_premium_price') or 400), show_upgrade=False, is_premium_user=True)
-    await call.message.answer('Ваша новая ссылка для второй панели:', reply_markup=kb)
-
-@router.callback_query(F.data == "vpn_connect_device")
-async def vpn_connect_device_cb(call: types.CallbackQuery):
-    text = "<b>Какое у вас устройство?</b>\n\nВыберите тип вашего устройства для получения инструкции:"
-    await safe_edit_message(call, text=text, reply_markup=user_kb.get_vpn_devices_kb())
-
-@router.callback_query(F.data.startswith("vpn_device_"))
-async def vpn_device_selected_cb(call: types.CallbackQuery, repo: Repository, config: Config):
-    device = call.data.split("vpn_device_")[1]
-    user_id = call.from_user.id
-    subs = await repo.get_user_vpn_subscriptions(user_id)
-    
-    if not subs:
-        await call.answer("У вас нет активной подписки!", show_alert=True)
-        return
-
-    rendered_subs = _render_vpn_subscription_blocks(subs, config)
-    
-    download_urls = {
-        "ios": "https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973",
-        "macos": "https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973",
-        "android": "https://play.google.com/store/apps/details?id=com.happproxy",
-        "windows": "https://github.com/Happ-proxy/happ-desktop/releases/latest/download/setup-Happ.x64.exe"
-    }
-    dl_url = download_urls.get(device, "https://happ-app.com")
-    app_name = "Happ"
-
-    tun_step = ""
-    if device in ("windows", "macos"):
-        tun_step = "\n3️⃣ В Happ на ПК выберите режим работы <b>TUN</b>"
-    
-    text = (
-        f"<b>Инструкция по подключению ({device.upper()})</b>\n\n"
-        f"1️⃣ Скачайте приложение <b>{app_name}</b> по кнопке ниже.\n"
-        f"2️⃣ После установки нажмите кнопку <b>«⚡ Подключить»</b>{tun_step}\n\n"
-        f"{rendered_subs}"
-    )
-    
-    await safe_edit_message(
-        call, 
-        text=text, 
-        reply_markup=user_kb.get_vpn_connect_instruction_kb(dl_url)
-    )
-
+    await call.message.answer('Тариф обновлён до Premium+. Ссылка для подключения осталась прежней.', reply_markup=kb)
 
 @router.callback_query(F.data == "vpn_connect_now")
 async def vpn_connect_now_cb(call: types.CallbackQuery, repo: Repository, config: Config):
@@ -594,20 +366,11 @@ async def vpn_connect_now_cb(call: types.CallbackQuery, repo: Repository, config
         await call.answer("У вас нет активной подписки!", show_alert=True)
         return
 
-    rendered_subs = _render_vpn_subscription_blocks(subs, config)
-
-    text = (
-        "<b>Подключение через Happ</b>\n\n"
-        "1. Скопируйте все ссылки ниже:\n\n"
-        f"{rendered_subs}\n\n"
-        "2. Откройте приложение Happ\n\n"
-        "3. Сверху справа нажмите на иконку «+» и выберите «Вставить из буфера обмена»\n\n"
-        "4. Профиль добавится автоматически, нажмите на него для подключения!"
-    )
-    await safe_edit_message(call, text=text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="⬅️ К выбору устройства", callback_data="vpn_connect_device")],
-        [types.InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")]
-    ]))
+    await call.answer()
+    for sub in subs:
+        expiry = sub['expires_at'].strftime('%Y-%m-%d %H:%M') if sub.get('expires_at') else 'Бессрочно'
+        header = f"<b>🔐 {sub.get('tariff_name') or 'VPN'}</b> — действует до {expiry}"
+        await send_subscription_card(call.bot, call.from_user.id, sub.get('subscription_url'), header)
 
 
 @router.callback_query(F.data.startswith("buy_vpn_gb|"))
@@ -648,16 +411,14 @@ async def buy_vpn_gb_callback(call: types.CallbackQuery, repo: Repository, confi
     await repo.extend_vpn_subscription(client_uuid, added_gb=amount)
 
     # Update in panel
-    panel = client['panel']
-    xui = xui_from_config(config, secondary=(panel == 'secondary'))
-    await xui.login()
     new_total = (client['total_gb'] or 0) + amount
+    remna = remnawave_from_config(config)
     try:
-        await xui.update_client(inbound_id=client['inbound_id'], client_uuid=client_uuid, email=client['email'], enable=True, total_gb=new_total)
+        await remna.update_user(client_uuid, total_gb=new_total)
     except Exception:
-        logging.exception("Failed to update client total_gb on XUI")
-
-    await xui.close()
+        logging.exception("Failed to update user trafficLimit on Remnawave")
+    finally:
+        await remna.close()
 
     # clear low_gb notification for subscription
     try:
@@ -688,4 +449,3 @@ async def buy_vpn_gb_callback(call: types.CallbackQuery, repo: Repository, confi
         await repo.add_purchase_to_history(call.from_user.id, 'vpn_gb', f'GB topup client={client_uuid}', amount, total_cost, 0.0)
     except Exception:
         logging.exception('Failed to write purchase history for GB topup')
-

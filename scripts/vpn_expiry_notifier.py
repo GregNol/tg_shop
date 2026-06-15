@@ -9,7 +9,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from config import load_config
 from services.repository import Repository
-from services.xui import xui_from_config
+from services.remnawave import remnawave_from_config
 from services.fragment_sender import FragmentSender
 
 logging.basicConfig(level=logging.INFO)
@@ -143,43 +143,32 @@ async def run():
 
                     updated_clients = []
                     try:
-                        for client in clients:
-                            panel = client['panel'] or 'primary'
-                            xui = xui_from_config(config, secondary=(panel == 'secondary'))
-                            await xui.login()
-                            try:
-                                success = await xui.update_client(
-                                    inbound_id=client['inbound_id'],
-                                    client_uuid=client['client_uuid'],
-                                    email=client['email'],
-                                    enable=True,
-                                    expire_time=new_expiry_ms,
+                        remna = remnawave_from_config(config)
+                        try:
+                            for client in clients:
+                                success = await remna.update_user(
+                                    client['client_uuid'],
+                                    expire_at=new_expiry,
                                 )
-                            finally:
-                                await xui.close()
-
-                            if not success:
-                                raise RuntimeError(f"xui_update_failed:{client['client_uuid']}")
-                            updated_clients.append(client)
+                                if not success:
+                                    raise RuntimeError(f"remnawave_update_failed:{client['client_uuid']}")
+                                updated_clients.append(client)
+                        finally:
+                            await remna.close()
                     except Exception as e:
-                        logging.exception(f"XUI renewal update failed for subscription {sub_id}: {e}")
-                        for client in updated_clients:
-                            try:
-                                panel = client['panel'] or 'primary'
-                                xui = xui_from_config(config, secondary=(panel == 'secondary'))
-                                await xui.login()
+                        logging.exception(f"Remnawave renewal update failed for subscription {sub_id}: {e}")
+                        remna = remnawave_from_config(config)
+                        try:
+                            for client in updated_clients:
                                 try:
-                                    await xui.update_client(
-                                        inbound_id=client['inbound_id'],
-                                        client_uuid=client['client_uuid'],
-                                        email=client['email'],
-                                        enable=True,
-                                        expire_time=old_expiry_ms,
+                                    await remna.update_user(
+                                        client['client_uuid'],
+                                        expire_at=current_expiry,
                                     )
-                                finally:
-                                    await xui.close()
-                            except Exception:
-                                logging.exception("Failed to rollback XUI renewal for client %s", client['client_uuid'])
+                                except Exception:
+                                    logging.exception("Failed to rollback Remnawave renewal for client %s", client['client_uuid'])
+                        finally:
+                            await remna.close()
 
                         async with pool.acquire() as conn:
                             async with conn.transaction():
@@ -303,12 +292,13 @@ async def run():
                 # transaction committed successfully; now update external panel and notify
                 new_total = (prev_total or 0) + auto_gb
                 try:
-                    xui = xui_from_config(config, secondary=(panel == 'secondary'))
-                    await xui.login()
-                    await xui.update_client(inbound_id=inbound_id, client_uuid=client_uuid, email=email, enable=True, total_gb=new_total)
-                    await xui.close()
+                    remna = remnawave_from_config(config)
+                    try:
+                        await remna.update_user(client_uuid, total_gb=new_total)
+                    finally:
+                        await remna.close()
                 except Exception as e:
-                    logging.exception(f"XUI update failed after auto-topup for {client_uuid}: {e}")
+                    logging.exception(f"Remnawave update failed after auto-topup for {client_uuid}: {e}")
                     # attempt to rollback DB changes: refund user, decrement GB, remove notification
                     try:
                         async with pool.acquire() as conn:
